@@ -46,6 +46,9 @@ type Options struct {
 	Auth           *identity.Authenticator
 	AllowedRoles   []string
 	ProtectedUsers []string
+	// AuthFailureLimit is how many 401/403 responses one client address may cause per
+	// minute before it is answered 429. Zero disables the limit.
+	AuthFailureLimit int
 }
 
 type server struct {
@@ -85,7 +88,7 @@ func New(opts Options) http.Handler {
 	mux.Handle("POST /admin/api/clients/{username}/password", a.Require(ScopeCredentialsRotate, http.HandlerFunc(s.rotatePassword)))
 	mux.Handle("DELETE /admin/api/clients/{username}", a.Require(ScopeClientsDelete, http.HandlerFunc(s.deleteClient)))
 
-	return secure(mux)
+	return secure(newFailureLimiter(opts.AuthFailureLimit, time.Minute).middleware(mux))
 }
 
 // ---- DTOs ----

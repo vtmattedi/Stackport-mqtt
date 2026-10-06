@@ -52,11 +52,12 @@ func main() {
 	srv := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: api.New(api.Options{
-			Broker:         broker,
-			Stats:          brokerStats,
-			Auth:           identity.NewAuthenticator(cfg.IdentityAudience, introspector),
-			AllowedRoles:   cfg.AllowedRoles,
-			ProtectedUsers: cfg.ProtectedUsers,
+			Broker:           broker,
+			Stats:            brokerStats,
+			Auth:             identity.NewAuthenticator(cfg.IdentityAudience, introspector),
+			AllowedRoles:     cfg.AllowedRoles,
+			ProtectedUsers:   cfg.ProtectedUsers,
+			AuthFailureLimit: cfg.AuthFailureLimit,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

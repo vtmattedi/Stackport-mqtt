@@ -24,6 +24,8 @@ type Config struct {
 	AllowedRoles []string
 	// ProtectedUsers can never be disabled, rotated or deleted through the API.
 	ProtectedUsers []string
+	// AuthFailureLimit caps failed-auth responses per client address per minute (0 = off).
+	AuthFailureLimit int
 
 	IdentityBaseURL      string
 	IdentityClientID     string
@@ -45,6 +47,14 @@ func Load() (Config, error) {
 		IdentityClientSecret: os.Getenv("MW_IDENTITY_INTROSPECTION_CLIENT_SECRET"),
 		IdentityAudience:     get("MW_IDENTITY_AUDIENCE", "mw-mqtt"),
 		IdentityTimeout:      5 * time.Second,
+	}
+	cfg.AuthFailureLimit = 20
+	if raw := strings.TrimSpace(os.Getenv("MQTT_AUTH_FAIL_LIMIT")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 || n > 10000 {
+			return Config{}, fmt.Errorf("invalid MQTT_AUTH_FAIL_LIMIT %q", raw)
+		}
+		cfg.AuthFailureLimit = n
 	}
 	cfg.ProtectedUsers = append(list(get("MQTT_PROTECTED_USERS", "mqtt-admin")), cfg.APIUsername)
 

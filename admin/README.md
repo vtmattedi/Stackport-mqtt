@@ -13,6 +13,7 @@ browser -> mw-bff (/api/mqtt/*) -> mqtt-admin -> Dynamic Security ($CONTROL over
 - The service connects to the broker as its own user `mqtt-admin-api` with role `dynsec-admin` (only `$CONTROL/dynamic-security/#` access), never as the bootstrap `mqtt-admin`. The broker certificate is verified against the NM Root CA; `MQTT_TLS_SERVER_NAME` is checked even though the service dials `mqtt:8883` internally.
 - `mqtt-admin` and the service's own user are protected: they cannot be disabled, rotated or deleted through the API.
 - Passwords: when omitted the service generates one (24 random bytes, base64url) and returns it **once** in the response (`Cache-Control: no-store`). Supplied passwords must be 24-128 characters. Passwords are never logged and never echoed back when supplied by the caller.
+- The service is reached over a public Stackport domain, like MW OAuth and MW Mail, so unauthenticated callers can only reach `/health` and `/ready`. Callers that keep causing 401/403 responses are throttled: after `MQTT_AUTH_FAIL_LIMIT` failures per client address per minute (default 20, `0` disables) they get `429` until the window ends. Successful requests are never counted. The client address is the `X-Real-IP` that Stackport's nginx sets.
 - Every change is logged as a JSON `audit` line (actor = Identity `sub`, action, target, result).
 
 ## Routes and scopes

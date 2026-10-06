@@ -25,6 +25,7 @@ type fakeBroker struct {
 	commands []map[string]any
 	reply    json.RawMessage
 	err      error
+	down     bool
 }
 
 func (f *fakeBroker) Do(_ context.Context, c map[string]any) (json.RawMessage, error) {
@@ -33,7 +34,7 @@ func (f *fakeBroker) Do(_ context.Context, c map[string]any) (json.RawMessage, e
 	f.commands = append(f.commands, c)
 	return f.reply, f.err
 }
-func (f *fakeBroker) Connected() bool { return true }
+func (f *fakeBroker) Connected() bool { return !f.down }
 func (f *fakeBroker) last() map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -221,9 +222,19 @@ func TestRotateWithoutBodyGeneratesPassword(t *testing.T) {
 	}
 }
 
-func TestHealthIsPublic(t *testing.T) {
-	if got := do(newTestServer(&fakeBroker{}), "GET", "/health", "", "").Code; got != 200 {
-		t.Fatalf("health: %d", got)
+func TestHealthIsPublicAndTracksBrokerConnection(t *testing.T) {
+	up := do(newTestServer(&fakeBroker{}), "GET", "/health", "", "")
+	if up.Code != 200 || !strings.Contains(up.Body.String(), `"ok"`) {
+		t.Fatalf("connected: %d %s", up.Code, up.Body)
+	}
+	for _, path := range []string{"/health", "/ready"} {
+		down := do(newTestServer(&fakeBroker{down: true}), "GET", path, "", "")
+		if down.Code != 503 || !strings.Contains(down.Body.String(), `"degraded"`) {
+			t.Fatalf("%s with broker down: %d %s", path, down.Code, down.Body)
+		}
+		if strings.Contains(down.Body.String(), "broker") {
+			t.Fatalf("public health must not describe internals: %s", down.Body)
+		}
 	}
 }
 

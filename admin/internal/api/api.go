@@ -66,16 +66,17 @@ func New(opts Options) http.Handler {
 	a := opts.Auth
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) {
+	// Health reflects the broker connection: 200 while connected, 503 while it is down.
+	// The body is deliberately minimal because this route is public.
+	health := func(w http.ResponseWriter, _ *http.Request) {
 		if !s.broker.Connected() {
-			writeError(w, http.StatusServiceUnavailable, "broker_unavailable")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "degraded"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
-	})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("GET /ready", health) // kept as an alias
 
 	mux.Handle("GET /admin/api/server", a.Require(ScopeServerRead, http.HandlerFunc(s.serverStatus)))
 	mux.Handle("GET /admin/api/stats", a.Require(ScopeServerRead, http.HandlerFunc(s.brokerStats)))

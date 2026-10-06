@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# Creates the `nmnw` role: fully trusted NightMare Network access. It may publish,
+# Creates the `nmnw` role (and the narrow `dynsec-admin` role for the mqtt-admin API): fully trusted NightMare Network access. It may publish,
 # subscribe and receive on every topic (`#`), including Control/*. `#` does not match
 # $-prefixed topics, so the Dynamic Security admin channel ($CONTROL) and $SYS stay
 # reserved for the admin client. Safe to run more than once.
@@ -16,3 +16,14 @@ done
 
 echo "Role $role:"
 ctrl getRole "$role"
+
+# dynsec-admin: only what the mqtt-admin API client needs to speak Dynamic Security.
+# It is not a general-purpose role; use it solely for the mqtt-admin-api user.
+api_role=dynsec-admin
+ctrl createRole "$api_role" || true
+ctrl addRoleACL "$api_role" publishClientSend '$CONTROL/dynamic-security/v1' allow || true
+ctrl addRoleACL "$api_role" publishClientReceive '$CONTROL/dynamic-security/v1/response' allow || true
+ctrl addRoleACL "$api_role" subscribeLiteral '$CONTROL/dynamic-security/v1/response' allow || true
+
+echo "Role $api_role:"
+ctrl getRole "$api_role"

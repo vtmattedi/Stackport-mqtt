@@ -48,6 +48,39 @@ services:
       start_period: 10s
     stop_grace_period: 20s
 
+  # Broker administration API behind mw-bff. Validates MW Identity delegated tokens and
+  # applies client changes through Dynamic Security. It stays dormant (restarting with a
+  # clear log line) until secrets/admin-api.env exists.
+  mqtt-admin:
+    build: ./admin
+    image: stackport-mqtt-admin:local
+    restart: unless-stopped
+    user: "10001:10001"
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    env_file:
+      - path: secrets/root-ca.env
+        required: false
+      - path: secrets/admin-api.env
+        required: false
+    environment:
+      PORT: "8090"
+      MQTT_BROKER_URL: ssl://mqtt:8883
+    expose:
+      - "8090"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8090/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   mqtt-data:
   mqtt-certs:

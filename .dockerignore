@@ -5,3 +5,4 @@ README.md
 *.key
 **/privkey.pem
 **/dynamic-security.json
+admin

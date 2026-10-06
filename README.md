@@ -211,6 +211,10 @@ mosquitto_ctrl -h localhost -p 8883 \
 
 Relevant operations include `disableClient`, `enableClient`, `setClientPassword`, `deleteClient`, `getClient`, and `getRole`.
 
+## Admin API
+
+`mqtt-admin` (see [admin/README.md](admin/README.md)) is the web API behind `mw-bff` for creating, disabling, rotating and deleting MQTT users with MW Identity authorization. It runs in this Compose project, connects with its own `dynsec-admin` user, and stays dormant until `secrets/admin-api.env` exists. The admin README has the onboarding steps.
+
 ## External validation
 
 Run TLS/hostname verification and confirm anonymous access is rejected:

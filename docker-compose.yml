@@ -29,6 +29,7 @@ services:
         condition: service_completed_successfully
     expose:
       - "8883"
+      - "9001"
     read_only: true
     security_opt:
       - no-new-privileges:true

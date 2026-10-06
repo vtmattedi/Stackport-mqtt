@@ -15,13 +15,14 @@ This is a normal managed StackPort project. Its Compose file never publishes a h
 - Persists broker state in `mqtt-data` and leaf TLS material in `mqtt-certs`.
 - Attaches `mqtt` to `stackport-proxy` when the TCP exposure is created.
 - Publishes `8883 → mqtt:8883` through a StackPort-owned TCP proxy.
+- Routes an HTTPS domain (`mqtt-ws.mattediworks.com`) to the plain WebSocket listener `mqtt:9001` for browser clients; nginx terminates TLS with Let's Encrypt.
 - Provides the container terminal used for client/role administration.
 
 StackPort does not create the private PKI. The Root and MQTT Intermediate private keys remain on the secured offline administration system.
 
 ## Before onboarding
 
-Create the following outside StackPort:
+Create the following outside StackPort. `pki/pki.ps1` generates all of it, plus the four env files, using Docker (see [pki/README.md](pki/README.md)):
 
 - `nm-root-ca.crt` — public Root CA certificate.
 - `fullchain.pem` — `mqtt.mattediworks.com` leaf certificate followed by the MQTT Intermediate certificate.
@@ -58,7 +59,7 @@ Use these project fields:
 - Name: `MQTT`
 - Compose file: `docker-compose.yml`
 - Health-check interval: `0` (disabled; there is no HTTP endpoint)
-- HTTP domains: none
+- HTTP domains: none at first (the WebSocket domain is added in step 4b)
 
 The Compose target detector should show `mqtt:8883`. The four env files below are marked optional at Compose-parse time so target discovery works before secrets are configured. Runtime initialization still fails closed if any value is missing.
 
@@ -117,7 +118,33 @@ Service:        mqtt
 Container port: 8883
 ```
 
-Do not add a Compose `ports:` entry. Do not add an HTTP domain for the broker.
+Do not add a Compose `ports:` entry. Port 8883 is the device listener only; the browser domain below is separate.
+
+### 4b. Add the browser WebSocket domain (optional)
+
+Browsers do not trust the private NM Root CA, so web clients connect through StackPort's nginx, which presents a Let's Encrypt certificate. On the project page add an HTTP domain:
+
+```text
+Domain:         mqtt-ws.mattediworks.com
+Service:        mqtt
+Container port: 9001
+SSL:            on
+```
+
+Create an `A` record for `mqtt-ws.mattediworks.com` pointing at the StackPort VPS first. Leave the health-check path empty (the listener does not serve HTTP).
+
+Paho JavaScript:
+
+```js
+const client = new Paho.Client("mqtt-ws.mattediworks.com", 443, "/mqtt", "web-" + crypto.randomUUID());
+client.connect({ useSSL: true, userName: "web-client", password: "...", keepAliveInterval: 30 });
+```
+
+Notes:
+
+- Authentication and ACLs are the same Dynamic Security clients and roles. Create a separate client and role per web app (`provision-device.sh`); never reuse a device identity in a browser.
+- Keep `keepAliveInterval` at 30s or less: nginx closes idle connections after its default 60s `proxy_read_timeout`. For longer keepalives set `proxy_read_timeout` in the domain's extra config.
+- Port 9001 is plain WebSocket and exists only on the Docker network. It is not published to the host.
 
 ### 5. Configure DNS
 
@@ -195,6 +222,8 @@ sh scripts/smoke-test.sh \
 Also verify:
 
 - TCP `8883` is reachable.
+- `wss://mqtt-ws.mattediworks.com/mqtt` connects with valid credentials and is refused without them.
+- TCP `9001` is not reachable from the internet.
 - TCP `1883` is not reachable.
 - Invalid passwords and disabled clients fail.
 - Publishing or subscribing outside a device role fails.

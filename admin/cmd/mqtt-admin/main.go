@@ -16,6 +16,7 @@ import (
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/config"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/dynsec"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/identity"
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/stats"
 )
 
 func main() {
@@ -32,6 +33,7 @@ func main() {
 		slog.Error("identity client", "error", err)
 		os.Exit(1)
 	}
+	brokerStats := stats.New()
 	broker, err := dynsec.New(dynsec.Options{
 		URL:        cfg.BrokerURL,
 		Username:   cfg.APIUsername,
@@ -39,6 +41,7 @@ func main() {
 		ServerName: cfg.TLSServerName,
 		RootCAPEM:  cfg.RootCAPEM,
 		ClientID:   "mqtt-admin-api",
+		Watch:      map[string]func(string, []byte){"$SYS/#": brokerStats.Handle},
 	})
 	if err != nil {
 		slog.Error("broker client", "error", err)
@@ -50,6 +53,7 @@ func main() {
 		Addr: ":" + cfg.Port,
 		Handler: api.New(api.Options{
 			Broker:         broker,
+			Stats:          brokerStats,
 			Auth:           identity.NewAuthenticator(cfg.IdentityAudience, introspector),
 			AllowedRoles:   cfg.AllowedRoles,
 			ProtectedUsers: cfg.ProtectedUsers,

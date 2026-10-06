@@ -11,6 +11,7 @@ import (
 
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/dynsec"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/identity"
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/stats"
 )
 
 type fakeIntrospector map[string]identity.Token
@@ -44,6 +45,12 @@ func (f *fakeBroker) last() map[string]any {
 
 const aud = "mw-mqtt"
 
+type fakeStats struct{}
+
+func (fakeStats) Snapshot() stats.Snapshot {
+	return stats.Snapshot{Available: true, Version: "2.1.2", Clients: map[string]float64{"connected": 3}}
+}
+
 func newTestServer(b *fakeBroker) http.Handler {
 	tokens := fakeIntrospector{
 		"all": {Active: true, Subject: "usr_1", Audience: []string{aud}, Scopes: []string{
@@ -55,6 +62,7 @@ func newTestServer(b *fakeBroker) http.Handler {
 	}
 	return New(Options{
 		Broker:         b,
+		Stats:          fakeStats{},
 		Auth:           identity.NewAuthenticator(aud, tokens),
 		AllowedRoles:   []string{"nmnw"},
 		ProtectedUsers: []string{"mqtt-admin", "mqtt-admin-api"},
@@ -74,14 +82,14 @@ func do(h http.Handler, method, path, token, body string) *httptest.ResponseReco
 func TestEveryAdminRouteRequiresAValidToken(t *testing.T) {
 	h := newTestServer(&fakeBroker{})
 	routes := []struct{ method, path string }{
-		{"GET", "/admin/api/server"}, {"GET", "/admin/api/roles"}, {"GET", "/admin/api/clients"},
+		{"GET", "/admin/api/server"}, {"GET", "/admin/api/stats"}, {"GET", "/admin/api/roles"}, {"GET", "/admin/api/clients"},
 		{"GET", "/admin/api/clients/gw1"}, {"POST", "/admin/api/clients"},
 		{"POST", "/admin/api/clients/gw1/disable"}, {"POST", "/admin/api/clients/gw1/enable"},
 		{"POST", "/admin/api/clients/gw1/password"}, {"DELETE", "/admin/api/clients/gw1"},
 	}
 	for _, r := range routes {
 		for token, want := range map[string]int{"": 401, "garbage": 401, "inactive": 401, "nosubject": 401, "otheraud": 403, "readonly": 403} {
-			if r.method == "GET" && r.path != "/admin/api/server" && r.path != "/admin/api/roles" && token == "readonly" {
+			if r.method == "GET" && r.path != "/admin/api/server" && r.path != "/admin/api/stats" && r.path != "/admin/api/roles" && token == "readonly" {
 				continue // readonly legitimately reads clients
 			}
 			if got := do(h, r.method, r.path, token, "").Code; got != want {
@@ -216,5 +224,16 @@ func TestRotateWithoutBodyGeneratesPassword(t *testing.T) {
 func TestHealthIsPublic(t *testing.T) {
 	if got := do(newTestServer(&fakeBroker{}), "GET", "/health", "", "").Code; got != 200 {
 		t.Fatalf("health: %d", got)
+	}
+}
+
+func TestStatsRequiresServerReadAndReturnsSnapshot(t *testing.T) {
+	h := newTestServer(&fakeBroker{})
+	if got := do(h, "GET", "/admin/api/stats", "readonly", "").Code; got != 403 {
+		t.Fatalf("readonly token: got %d, want 403", got)
+	}
+	rec := do(h, "GET", "/admin/api/stats", "all", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"version":"2.1.2"`) || !strings.Contains(rec.Body.String(), `"connected":3`) {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
 	}
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/dynsec"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/identity"
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/stats"
 )
 
 const (
@@ -36,8 +37,12 @@ const (
 
 var usernameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
+// StatsSource provides the latest broker statistics snapshot.
+type StatsSource interface{ Snapshot() stats.Snapshot }
+
 type Options struct {
 	Broker         dynsec.Broker
+	Stats          StatsSource
 	Auth           *identity.Authenticator
 	AllowedRoles   []string
 	ProtectedUsers []string
@@ -45,12 +50,13 @@ type Options struct {
 
 type server struct {
 	broker    dynsec.Broker
+	stats     StatsSource
 	allowed   []string
 	protected map[string]bool
 }
 
 func New(opts Options) http.Handler {
-	s := &server{broker: opts.Broker, allowed: opts.AllowedRoles, protected: map[string]bool{}}
+	s := &server{broker: opts.Broker, stats: opts.Stats, allowed: opts.AllowedRoles, protected: map[string]bool{}}
 	for _, u := range opts.ProtectedUsers {
 		s.protected[u] = true
 	}
@@ -69,6 +75,7 @@ func New(opts Options) http.Handler {
 	})
 
 	mux.Handle("GET /admin/api/server", a.Require(ScopeServerRead, http.HandlerFunc(s.serverStatus)))
+	mux.Handle("GET /admin/api/stats", a.Require(ScopeServerRead, http.HandlerFunc(s.brokerStats)))
 	mux.Handle("GET /admin/api/roles", a.Require(ScopeRolesRead, http.HandlerFunc(s.listRoles)))
 	mux.Handle("GET /admin/api/clients", a.Require(ScopeClientsRead, http.HandlerFunc(s.listClients)))
 	mux.Handle("GET /admin/api/clients/{username}", a.Require(ScopeClientsRead, http.HandlerFunc(s.getClient)))
@@ -295,6 +302,10 @@ func (s *server) listRoles(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"roles": out, "assignable": s.allowed})
+}
+
+func (s *server) brokerStats(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.stats.Snapshot())
 }
 
 func (s *server) serverStatus(w http.ResponseWriter, r *http.Request) {

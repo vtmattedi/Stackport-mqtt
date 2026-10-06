@@ -46,6 +46,9 @@ type Options struct {
 	ServerName string
 	RootCAPEM  []byte
 	ClientID   string
+	// Watch maps a topic filter to a handler. Filters are subscribed on every
+	// (re)connect; the broker must grant this user read access to them.
+	Watch map[string]func(topic string, payload []byte)
 }
 
 type Client struct {
@@ -85,6 +88,15 @@ func New(opts Options) (*Client, error) {
 			if token.Wait() && token.Error() != nil {
 				slog.Error("dynsec: subscribe failed", "error", token.Error())
 				return
+			}
+			for filter, handler := range opts.Watch {
+				handler := handler
+				token := cl.Subscribe(filter, 0, func(_ mqtt.Client, msg mqtt.Message) {
+					handler(msg.Topic(), msg.Payload())
+				})
+				if token.Wait() && token.Error() != nil {
+					slog.Error("dynsec: watch subscribe failed", "filter", filter, "error", token.Error())
+				}
 			}
 			slog.Info("dynsec: connected to broker")
 		}).

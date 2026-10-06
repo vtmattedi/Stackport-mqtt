@@ -204,7 +204,9 @@ ROOT_CA           contents of nm-root-ca.crt
 Useful direct administration commands from the same terminal follow this pattern:
 
 ```sh
-mosquitto_ctrl -h localhost -p 8883   --cafile /mosquitto/certs/nm-root-ca.crt --insecure   -u mqtt-admin dynsec help
+mosquitto_ctrl -h localhost -p 8883 \
+  --cafile /mosquitto/certs/nm-root-ca.crt --insecure \
+  -u mqtt-admin dynsec help
 ```
 
 Relevant operations include `disableClient`, `enableClient`, `setClientPassword`, `deleteClient`, `getClient`, and `getRole`.
@@ -214,14 +216,14 @@ Relevant operations include `disableClient`, `enableClient`, `setClientPassword`
 Run TLS/hostname verification and confirm anonymous access is rejected:
 
 ```sh
-sh scripts/verify-tls.sh   mqtt.mattediworks.com 8883 /secure/path/nm-root-ca.crt
+sh scripts/verify-tls.sh \
+  mqtt.mattediworks.com 8883 /secure/path/nm-root-ca.crt
 ```
 
 Run an authenticated publish/subscribe round trip with any `nmnw` user. From Windows PowerShell:
 
 ```powershell
-.\scripts\smoke-test.ps1 -Username <user> -Topic smoke/ping -CaFile D:\pki-nm-2
-m-root-ca.crt
+.\scripts\smoke-test.ps1 -Username <user> -Topic smoke/ping -CaFile D:\pki-nm-2\nm-root-ca.crt
 ```
 
 or `sh scripts/smoke-test.sh <user> smoke/ping <ca>` on Linux/macOS. Use a throwaway user and delete it afterwards:

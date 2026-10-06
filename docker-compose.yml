@@ -1,0 +1,54 @@
+services:
+  mqtt-init:
+    image: eclipse-mosquitto:2.1.2-alpine
+    restart: "no"
+    user: "0:0"
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - path: secrets/admin.env
+        required: false
+      - path: secrets/root-ca.env
+        required: false
+      - path: secrets/broker-cert.env
+        required: false
+      - path: secrets/broker-key.env
+        required: false
+    entrypoint: ["/bin/sh", "/stackport-scripts/init-dynsec.sh"]
+    volumes:
+      - ./scripts:/stackport-scripts:ro
+      - mqtt-data:/mosquitto/data
+      - mqtt-certs:/mosquitto/certs
+
+  mqtt:
+    image: eclipse-mosquitto:2.1.2-alpine
+    restart: unless-stopped
+    user: "1883:1883"
+    depends_on:
+      mqtt-init:
+        condition: service_completed_successfully
+    expose:
+      - "8883"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./scripts:/stackport-scripts:ro
+      - mqtt-data:/mosquitto/data
+      - mqtt-certs:/mosquitto/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 20s
+
+volumes:
+  mqtt-data:
+  mqtt-certs:

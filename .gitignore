@@ -1,0 +1,5 @@
+.env
+secrets/*.env
+*.key
+**/privkey.pem
+**/dynamic-security.json

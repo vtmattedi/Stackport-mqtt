@@ -142,7 +142,7 @@ client.connect({ useSSL: true, userName: "web-client", password: "...", keepAliv
 
 Notes:
 
-- Authentication and ACLs are the same Dynamic Security clients and roles. Create a separate client and role per web app (`provision-device.sh`); never reuse a device identity in a browser.
+- Authentication and ACLs are the same Dynamic Security clients and roles. An `nmnw` user can read and write everything, so create a separate user per web app and do not reuse a gateway or device credential in a browser. A read-only role for dashboards can be added later.
 - Keep `keepAliveInterval` at 30s or less: nginx closes idle connections after its default 60s `proxy_read_timeout`. For longer keepalives set `proxy_read_timeout` in the domain's extra config.
 - Port 9001 is plain WebSocket and exists only on the Docker network. It is not published to the host.
 
@@ -156,77 +156,78 @@ mqtt.mattediworks.com → <StackPort VPS public IPv4>
 
 Add `AAAA` only after IPv6 has been intentionally tested end-to-end.
 
-## Initialize device access from the StackPort terminal
+## Access model
 
-Open the project’s running `mqtt` container in StackPort’s Terminal control.
+NightMare Network topics are global and device-rooted (`<device>/...`, plus `all/console/in` and `Control/*`), devices read each other's state, and gateways bridge ESP-NOW devices by publishing under their names and subscribing to `#`. Per-device topic ACLs cannot work, so this broker uses one trusted role:
 
-Inspect the deny defaults, clients, and roles:
+- **`nmnw`**: publish, subscribe and receive on `#` (which includes `Control/*`). `#` does not match `$`-prefixed topics, so the Dynamic Security admin channel (`$CONTROL`) and `$SYS` stay reserved for `mqtt-admin`.
+- **`mqtt-admin`**: broker administration only. Never use it from firmware or services.
+
+Any gateway, device or service gets the `nmnw` role. Create one user per gateway/device for individual revocation, or create a single user and flash it everywhere. Both work; the role grants the access. A credential is a full-trust credential: if it leaks, disable the user (or rotate the shared one).
+
+The broker is a single trust domain. If NM-NW later gains namespaces, or tenants must be isolated, spin up a separate broker or revisit the roles.
+
+## Initialize access from the StackPort terminal
+
+Open the project's running `mqtt` container in StackPort's Terminal control. The scripts prompt for the admin username and password without echo.
+
+Inspect the deny defaults, clients and roles:
 
 ```sh
 sh /stackport-scripts/show-security-state.sh
 ```
 
-Create a device with a unique password and device-specific role:
+Create the role once (safe to repeat):
 
 ```sh
-sh /stackport-scripts/provision-device.sh esp32-nm-6ca172e0
+sh /stackport-scripts/setup-roles.sh
 ```
 
-Default grants for that command are:
+Create a user (gateway, device or service) with the `nmnw` role. Use a unique random password of at least 24 characters:
+
+```sh
+sh /stackport-scripts/provision-client.sh nmnw-gateway-aabbccddeeff
+```
+
+Pass a second argument to use a different role. Passwords are not printed.
+
+Firmware connects with these values (see the NightMareNetwork `creds.h`):
 
 ```text
-publish:   devices/esp32-nm-6ca172e0/events/#
-subscribe: devices/esp32-nm-6ca172e0/commands/#
-receive:   devices/esp32-nm-6ca172e0/commands/#
+REMOTE_MQTT_URL   mqtt.mattediworks.com
+REMOTE_MQTT_PORT  8883
+MQTT_USER         <the username you created>
+MQTT_PASSWD       <its password>
+ROOT_CA           contents of nm-root-ca.crt
 ```
-
-Override both filters when the final NM-NW topic ontology differs:
-
-```sh
-sh /stackport-scripts/provision-device.sh \
-  esp32-nm-6ca172e0 \
-  'nm/devices/esp32-nm-6ca172e0/events/#' \
-  'nm/devices/esp32-nm-6ca172e0/commands/#'
-```
-
-The scripts prompt without echo for both admin and device passwords. Passwords are not printed.
 
 Useful direct administration commands from the same terminal follow this pattern:
 
 ```sh
-mosquitto_ctrl -h localhost -p 8883 \
-  --cafile /mosquitto/certs/nm-root-ca.crt --insecure \
-  -u mqtt-admin dynsec help
+mosquitto_ctrl -h localhost -p 8883   --cafile /mosquitto/certs/nm-root-ca.crt --insecure   -u mqtt-admin dynsec help
 ```
 
-Use the interactive password prompt when offered. Relevant operations include `disableClient`, `enableClient`, `setClientPassword`, `deleteClient`, `getClient`, and `getRole`.
+Relevant operations include `disableClient`, `enableClient`, `setClientPassword`, `deleteClient`, `getClient`, and `getRole`.
 
 ## External validation
 
 Run TLS/hostname verification and confirm anonymous access is rejected:
 
 ```sh
-sh scripts/verify-tls.sh \
-  mqtt.mattediworks.com 8883 /secure/path/nm-root-ca.crt
+sh scripts/verify-tls.sh   mqtt.mattediworks.com 8883 /secure/path/nm-root-ca.crt
 ```
 
-Run an authenticated publish/subscribe round trip. A device role can publish only to `events/#` and subscribe only to `commands/#`, so no topic works in both directions for a real device. Use a throwaway client whose role allows both on one test topic:
-
-```sh
-# in the StackPort mqtt container terminal
-sh /stackport-scripts/provision-device.sh smoke-test 'devices/smoke/#' 'devices/smoke/#'
-```
-
-Then from your machine (Windows PowerShell, or `sh scripts/smoke-test.sh <user> <topic> <ca>` on Linux/macOS):
+Run an authenticated publish/subscribe round trip with any `nmnw` user. From Windows PowerShell:
 
 ```powershell
-.\scripts\smoke-test.ps1 -Username smoke-test -Topic devices/smoke/ping -CaFile D:\pki-nm-2\nm-root-ca.crt
+.\scripts\smoke-test.ps1 -Username <user> -Topic smoke/ping -CaFile D:\pki-nm-2
+m-root-ca.crt
 ```
 
-Delete the throwaway client afterwards:
+or `sh scripts/smoke-test.sh <user> smoke/ping <ca>` on Linux/macOS. Use a throwaway user and delete it afterwards:
 
 ```sh
-mosquitto_ctrl -h localhost -p 8883 --cafile /mosquitto/certs/nm-root-ca.crt --insecure -u mqtt-admin dynsec deleteClient smoke-test
+mosquitto_ctrl -h localhost -p 8883 --cafile /mosquitto/certs/nm-root-ca.crt --insecure -u mqtt-admin dynsec deleteClient <user>
 ```
 
 Also verify:
@@ -236,7 +237,7 @@ Also verify:
 - TCP `9001` is not reachable from the internet.
 - TCP `1883` is not reachable.
 - Invalid passwords and disabled clients fail.
-- Publishing or subscribing outside a device role fails.
+- An `nmnw` user cannot publish to `$CONTROL/#` or subscribe to `$SYS/#`.
 - The certificate chains to the NM Root CA and hostname verification succeeds.
 
 ## Certificate rotation in StackPort

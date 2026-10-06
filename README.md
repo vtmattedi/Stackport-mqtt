@@ -210,13 +210,23 @@ sh scripts/verify-tls.sh \
   mqtt.mattediworks.com 8883 /secure/path/nm-root-ca.crt
 ```
 
-Run an authenticated publish/subscribe round trip:
+Run an authenticated publish/subscribe round trip. A device role can publish only to `events/#` and subscribe only to `commands/#`, so no topic works in both directions for a real device. Use a throwaway client whose role allows both on one test topic:
 
 ```sh
-sh scripts/smoke-test.sh \
-  esp32-nm-6ca172e0 \
-  devices/esp32-nm-6ca172e0/events/smoke \
-  /secure/path/nm-root-ca.crt
+# in the StackPort mqtt container terminal
+sh /stackport-scripts/provision-device.sh smoke-test 'devices/smoke/#' 'devices/smoke/#'
+```
+
+Then from your machine (Windows PowerShell, or `sh scripts/smoke-test.sh <user> <topic> <ca>` on Linux/macOS):
+
+```powershell
+.\scripts\smoke-test.ps1 -Username smoke-test -Topic devices/smoke/ping -CaFile D:\pki-nm-2\nm-root-ca.crt
+```
+
+Delete the throwaway client afterwards:
+
+```sh
+mosquitto_ctrl -h localhost -p 8883 --cafile /mosquitto/certs/nm-root-ca.crt --insecure -u mqtt-admin dynsec deleteClient smoke-test
 ```
 
 Also verify:

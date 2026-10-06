@@ -1,6 +1,7 @@
 services:
   mqtt-init:
-    image: eclipse-mosquitto:2.1.2-alpine
+    build: .
+    image: stackport-mqtt:local
     restart: "no"
     user: "0:0"
     security_opt:
@@ -16,12 +17,11 @@ services:
         required: false
     entrypoint: ["/bin/sh", "/stackport-scripts/init-dynsec.sh"]
     volumes:
-      - ./scripts:/stackport-scripts:ro
       - mqtt-data:/mosquitto/data
       - mqtt-certs:/mosquitto/certs
 
   mqtt:
-    image: eclipse-mosquitto:2.1.2-alpine
+    image: stackport-mqtt:local
     restart: unless-stopped
     user: "1883:1883"
     depends_on:
@@ -38,8 +38,6 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./scripts:/stackport-scripts:ro
       - mqtt-data:/mosquitto/data
       - mqtt-certs:/mosquitto/certs:ro
     healthcheck:

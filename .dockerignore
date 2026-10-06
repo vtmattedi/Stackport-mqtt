@@ -1,0 +1,7 @@
+.git
+secrets
+pki
+README.md
+*.key
+**/privkey.pem
+**/dynamic-security.json

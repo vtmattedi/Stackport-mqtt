@@ -1,6 +1,6 @@
 # mqtt-admin
 
-HTTP API for administering a Mosquitto broker's **clients** (users) through its Dynamic Security plugin. It runs next to the broker, authenticates callers with bearer tokens, and has two authentication modes so it works on its own or behind an identity provider.
+HTTP API for administering a Mosquitto broker's **clients** (users) and the **roles** that grant them access, through its Dynamic Security plugin. It runs next to the broker, authenticates callers with bearer tokens, and has two authentication modes so it works on its own or behind an identity provider.
 
 ```text
 caller ──(Authorization: Bearer …)──> mqtt-admin ──($CONTROL over mqtts)──> mosquitto
@@ -98,7 +98,9 @@ MQTT_ADMIN_TOKENS=ci:3f2a…c91:read:2027-01-31;ops:9b1c…e04:write;breakglass:
 |---|---|
 | `read` | `mqtt.clients.read`, `mqtt.roles.read`, `mqtt.server.read` |
 | `write` | `read` plus `mqtt.clients.write` and `mqtt.credentials.rotate` (create, enable, disable, new password). **No delete** |
-| `admin` | everything, including `mqtt.clients.delete` |
+| `admin` | everything: deleting clients, and creating, editing and deleting roles |
+
+`mqtt.roles.write` (create roles, edit their rules, give or take roles from clients) and `mqtt.roles.delete` change who may do what, so they are **not part of `write`**: a token configured as `write` before roles could be edited does not gain that power. Grant them on purpose, for example `write+mqtt.roles.write`.
 
 You can mix presets and single scopes: `read+mqtt.clients.delete`. `mqtt.server.read` also covers the statistics and the documentation routes.
 
@@ -147,6 +149,9 @@ Some actions are dangerous enough that a valid token should not be enough: issui
   | `POST /clients` (create) | required |
   | `POST /clients/{username}/enable` | required |
   | `POST /clients/{username}/password` (new password) | required |
+  | `POST /roles`, `DELETE /roles/{name}` | required |
+  | `POST /roles/{name}/acls`, `POST /roles/{name}/acls/remove` | required |
+  | `PUT` and `DELETE /clients/{username}/roles/{role}` | required |
   | `DELETE /clients/{username}` | required |
   | `POST /clients/{username}/disable` | **not** required: it only removes access, so it stays a fast kill switch |
   | every `GET` | not required |
@@ -162,7 +167,14 @@ Some actions are dangerous enough that a valid token should not be enough: issui
 ## Security model
 
 - The service connects to the broker as its own user (`MQTT_API_USERNAME`, default `mqtt-admin-api`) with the `dynsec-admin` role, which only allows the Dynamic Security channel and read-only `$SYS`. It never uses the broker's bootstrap `mqtt-admin`. The broker certificate is verified against `MQTT_ROOT_CA_B64`; `MQTT_TLS_SERVER_NAME` is checked even if the service dials the broker by an internal name.
-- Roles are read-only here. Only roles in `MQTT_ALLOWED_ROLES` (default `nmnw`) can be assigned to a client.
+- Roles can be managed here, behind guardrails that are enforced by the service, not by the caller:
+  - **Reserved roles** (`MQTT_RESERVED_ROLES`, default `admin,dynsec-admin`) cannot be created, edited, deleted or assigned. They belong to the broker's own administration. If the service's broker user holds a different role, add it to the list.
+  - **The control channel is never grantable.** Any rule whose topic starts with `$CONTROL` is refused, for every rule type, because a role that grants it lets its holders rewrite every user and role. Publishing into any `$`-prefixed topic is refused too. Reading `$SYS` (statistics) is allowed.
+  - Rules are validated: a known type, a well-formed topic filter (`+` and `#` only as whole levels, `#` last, at most 1024 bytes, no control characters), a priority between -1000 and 1000. `%u` and `%c` are accepted for per-client isolation.
+  - A role that clients still hold is not deleted unless the caller repeats the request with `?force=true`; the 409 answer says how many clients it would affect.
+  - Creating a role with its first rules is all-or-nothing: if a rule cannot be added the role is removed again.
+  - Every role and role-assignment change is in the audit log with the rule it touched.
+- `MQTT_ALLOWED_ROLES`, when set, narrows which roles can be given to clients (a deliberate allow-list). By default every role that is not reserved can be assigned.
 - `mqtt-admin` and the service's own user are protected (`MQTT_PROTECTED_USERS`): they cannot be disabled, rotated or deleted through the API.
 - Passwords: when omitted the service generates one (24 random bytes, base64url) and returns it **once** (`Cache-Control: no-store`). Supplied passwords must be 24-128 characters. Passwords and tokens are never logged and never echoed back.
 - Unauthenticated callers reach only `/health` and `/ready`. A caller that keeps causing 401/403 responses is throttled: after `MQTT_AUTH_FAIL_LIMIT` failures per client address per minute (default 20, `0` disables) it gets `429` until the window ends. Successful requests are never counted. The client address is the `X-Real-IP` set by the reverse proxy.
@@ -179,16 +191,23 @@ Some actions are dangerous enough that a valid token should not be enough: issui
 | `GET /admin/api/stats` | `mqtt.server.read` | latest broker `$SYS` snapshot: clients, store, messages, bytes, load averages, memory, uptime. In memory only; `stale` is true after 60 s without an update |
 | `GET /admin/api/docs` | `mqtt.server.read` | published documentation versions |
 | `GET /admin/api/docs/{version}` | `mqtt.server.read` | the document as `{version,status,content_type,documentation}`; `?lang=pt` or `?lang=en` (English by default). Embedded from `internal/docs/content/` |
-| `GET /admin/api/roles` | `mqtt.roles.read` | roles with ACLs, plus `assignable` |
+| `GET /admin/api/roles` | `mqtt.roles.read` | `{roles:[{name,description,acls,reserved,assignable,clientCount}], assignable:[names]}` |
+| `GET /admin/api/roles/{name}` | `mqtt.roles.read` | one role, plus `clients`: the usernames that hold it |
+| `POST /admin/api/roles` | `mqtt.roles.write` | `{name, description?, acls?:[{type,topic,allow?,priority?}]}`, 201. All-or-nothing |
+| `DELETE /admin/api/roles/{name}` | `mqtt.roles.delete` | 204. `409 role_in_use` with `{clients:n}` unless `?force=true`, which unlinks the clients first |
+| `POST /admin/api/roles/{name}/acls` | `mqtt.roles.write` | `{type, topic, allow?, priority?}`, 201 |
+| `POST /admin/api/roles/{name}/acls/remove` | `mqtt.roles.write` | `{type, topic}`, 204. A POST because topic filters do not belong in a path |
+| `PUT /admin/api/clients/{username}/roles/{role}` | `mqtt.roles.write` | give a role to a client, 204. Idempotent |
+| `DELETE /admin/api/clients/{username}/roles/{role}` | `mqtt.roles.write` | take it away, 204 |
 | `GET /admin/api/clients` | `mqtt.clients.read` | `{clients:[{username,disabled,roles}]}` |
 | `GET /admin/api/clients/{username}` | `mqtt.clients.read` | |
-| `POST /admin/api/clients` | `mqtt.clients.write` | `{username, role?, password?}`, 201, generated password returned once |
+| `POST /admin/api/clients` | `mqtt.clients.write` | `{username, role?, password?}`, 201, generated password returned once. Without `role`, the client gets `MQTT_DEFAULT_ROLE`, or the only assignable role; otherwise `400 role_required` |
 | `POST /admin/api/clients/{username}/disable` | `mqtt.clients.write` | 204 |
 | `POST /admin/api/clients/{username}/enable` | `mqtt.clients.write` | 204 |
 | `POST /admin/api/clients/{username}/password` | `mqtt.credentials.rotate` | optional `{password}`, otherwise generated and returned once |
 | `DELETE /admin/api/clients/{username}` | `mqtt.clients.delete` | 204 |
 
-Errors are `{"error":"<code>"}`: `unauthorized` (401), `forbidden` (403), `protected_user` (403), `invalid_username`/`invalid_password`/`invalid_body`/`role_not_allowed` (400), `not_found` (404), `already_exists` (409), `broker_unavailable` (503), `too_many_failures` (429). Unmapped routes return 404/405 and never reach the broker. Usernames match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+Errors are `{"error":"<code>"}`: `unauthorized` (401), `forbidden` (403), `protected_user` (403), `invalid_username`/`invalid_password`/`invalid_body`/`role_not_allowed` (400), `not_found` (404), `already_exists` (409), `broker_unavailable` (503), `too_many_failures` (429), and for roles: `invalid_role`/`invalid_acl`/`invalid_description`/`role_required` (400), `reserved_role`/`forbidden_topic` (403), `role_in_use` (409). Unmapped routes return 404/405 and never reach the broker. Usernames match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
 
 ## Configuration
 
@@ -204,12 +223,26 @@ Errors are `{"error":"<code>"}`: `unauthorized` (401), `forbidden` (403), `prote
 | `MQTT_BROKER_URL` | `ssl://mqtt:8883` | broker address |
 | `MQTT_TLS_SERVER_NAME` | `mqtt.mattediworks.com` | name the broker certificate must match |
 | `MQTT_ROOT_CA_B64` | none | base64 PEM of the CA that signed the broker certificate; shared with the broker's `secrets/root-ca.env` |
-| `MQTT_ALLOWED_ROLES` | `nmnw` | roles the API may assign |
+| `MQTT_ALLOWED_ROLES` | none | optional allow-list of the roles that may be given to clients; empty means every role that is not reserved |
+| `MQTT_RESERVED_ROLES` | `admin,dynsec-admin` | roles the API never creates, edits, deletes or assigns |
+| `MQTT_DEFAULT_ROLE` | none | role given to a new client when the caller names none (otherwise the only assignable role is used) |
 | `MQTT_PROTECTED_USERS` | `mqtt-admin` | clients the API never changes (the service's own user is always protected) |
 | `MQTT_AUTH_FAIL_LIMIT` | `20` | refused requests per address per minute before 429; `0` disables |
 | `PORT` | `8090` | listen port |
 
 See [../secrets/admin-api.env.example](../secrets/admin-api.env.example). The service exits with a clear message when required configuration is missing or invalid and Compose keeps restarting it, so it stays dormant until `secrets/admin-api.env` is correct.
+
+## Known Mosquitto issue and how the service avoids it
+
+Mosquitto 2.1.2's dynamic security plugin has a memory bug: a client created with its role **inside** the `createClient` command keeps a dangling reference to that role after the role is deleted. The client then shows a blank role name, and the broker can read freed memory or crash. We reproduced it with the broker's own commands, independent of this service, and it does not happen when the role is attached with a separate `addClientRole`, or when it is removed from the clients before the role is deleted.
+
+The service therefore:
+
+- never sends roles inside `createClient`: it creates the client, then attaches the role with `addClientRole`, and removes the client again if that fails;
+- unlinks every client from a role (`removeClientRole`) before it deletes the role. This also makes deleting a role safe for clients created the old way, by an earlier version of this service;
+- hides blank role names from client listings.
+
+If you manage the broker yourself, apply the same two rules (attach roles with `addClientRole`, and unlink before `deleteRole`), or avoid deleting roles from other tools.
 
 ## Development
 

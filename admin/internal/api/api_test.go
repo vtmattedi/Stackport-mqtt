@@ -26,12 +26,17 @@ type fakeBroker struct {
 	reply    json.RawMessage
 	err      error
 	down     bool
+	// fn, when set, answers each command individually (state-aware tests).
+	fn func(cmd map[string]any) (json.RawMessage, error)
 }
 
 func (f *fakeBroker) Do(_ context.Context, c map[string]any) (json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.commands = append(f.commands, c)
+	if f.fn != nil {
+		return f.fn(c)
+	}
 	return f.reply, f.err
 }
 func (f *fakeBroker) Connected() bool { return !f.down }
@@ -128,9 +133,15 @@ func TestCreateClientGeneratesPasswordOnceAndUsesAllowedRole(t *testing.T) {
 	if resp["role"] != "nmnw" || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("unexpected response %v / headers %v", resp, rec.Header())
 	}
-	cmd := b.last()
-	if cmd["command"] != "createClient" || cmd["password"] != resp["password"] {
-		t.Fatalf("broker command mismatch: %v", cmd)
+	if len(b.commands) != 2 {
+		t.Fatalf("expected createClient then addClientRole, got %v", b.commands)
+	}
+	create, attach := b.commands[0], b.commands[1]
+	if create["command"] != "createClient" || create["password"] != resp["password"] {
+		t.Fatalf("createClient mismatch: %v", create)
+	}
+	if attach["command"] != "addClientRole" || attach["username"] != "nmnw-gateway-aabbccddeeff" || attach["rolename"] != "nmnw" {
+		t.Fatalf("addClientRole mismatch: %v", attach)
 	}
 }
 
@@ -301,9 +312,14 @@ func TestDocsDescribeEveryScopeRouteAndErrorCode(t *testing.T) {
 		"POST /clients", "POST /clients/{username}/disable", "POST /clients/{username}/enable",
 		"POST /clients/{username}/password", "DELETE /clients/{username}",
 		"GET /docs", "GET /docs/{version}",
+		"GET /roles/{name}", "POST /roles", "DELETE /roles/{name}", "POST /roles/{name}/acls",
+		"POST /roles/{name}/acls/remove", "PUT /clients/{username}/roles/{role}",
+		"DELETE /clients/{username}/roles/{role}",
 	}
 	codes := []string{"unauthorized", "forbidden", "protected_user", "invalid_username",
-		"role_not_allowed", "already_exists", "not_found", "broker_unavailable", "too_many_failures"}
+		"role_not_allowed", "already_exists", "not_found", "broker_unavailable", "too_many_failures",
+		"role_required", "invalid_role", "reserved_role", "role_in_use", "invalid_acl",
+		"forbidden_topic", "invalid_description", "$CONTROL", "dynsec-admin", "mqtt.roles.write", "mqtt.roles.delete"}
 
 	for _, lang := range []string{"en", "pt"} {
 		body := do(h, "GET", "/admin/api/docs/v1?lang="+lang, "all", "").Body.String()

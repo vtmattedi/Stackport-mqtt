@@ -61,6 +61,8 @@ func main() {
 			Stats:            brokerStats,
 			Auth:             authorizer,
 			AllowedRoles:     cfg.AllowedRoles,
+			ReservedRoles:    cfg.ReservedRoles,
+			DefaultRole:      cfg.DefaultRole,
 			ProtectedUsers:   cfg.ProtectedUsers,
 			AuthFailureLimit: cfg.AuthFailureLimit,
 		}),

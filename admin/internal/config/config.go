@@ -34,9 +34,13 @@ type Config struct {
 	APIUsername   string
 	APIPassword   string
 
-	// AllowedRoles are the only roles the API may assign. Roles themselves are not
-	// managed here: this service administers clients, not the broker's access model.
+	// AllowedRoles optionally restricts the roles the API may assign. Empty (the default)
+	// means every role that is not reserved.
 	AllowedRoles []string
+	// ReservedRoles can never be created, edited, deleted or assigned through the API.
+	ReservedRoles []string
+	// DefaultRole is given to a new client when the caller names none.
+	DefaultRole string
 	// ProtectedUsers can never be disabled, rotated or deleted through the API.
 	ProtectedUsers []string
 	// AuthFailureLimit caps failed-auth responses per client address per minute (0 = off).
@@ -56,7 +60,9 @@ func Load() (Config, error) {
 		TLSServerName:        get("MQTT_TLS_SERVER_NAME", "mqtt.mattediworks.com"),
 		APIUsername:          get("MQTT_API_USERNAME", "mqtt-admin-api"),
 		APIPassword:          os.Getenv("MQTT_API_PASSWORD"),
-		AllowedRoles:         list(get("MQTT_ALLOWED_ROLES", "nmnw")),
+		AllowedRoles:         list(os.Getenv("MQTT_ALLOWED_ROLES")),
+		ReservedRoles:        list(get("MQTT_RESERVED_ROLES", "admin,dynsec-admin")),
+		DefaultRole:          strings.TrimSpace(os.Getenv("MQTT_DEFAULT_ROLE")),
 		IdentityBaseURL:      strings.TrimSpace(os.Getenv("MW_IDENTITY_INTERNAL_BASE_URL")),
 		IdentityClientID:     get("MW_IDENTITY_INTROSPECTION_CLIENT_ID", "mw-mqtt"),
 		IdentityClientSecret: os.Getenv("MW_IDENTITY_INTROSPECTION_CLIENT_SECRET"),
@@ -123,8 +129,12 @@ func Load() (Config, error) {
 		sort.Strings(missing)
 		return Config{}, fmt.Errorf("missing required environment: %s", strings.Join(missing, ", "))
 	}
-	if len(cfg.AllowedRoles) == 0 {
-		return Config{}, fmt.Errorf("MQTT_ALLOWED_ROLES must not be empty")
+	if cfg.DefaultRole != "" {
+		for _, reserved := range cfg.ReservedRoles {
+			if reserved == cfg.DefaultRole {
+				return Config{}, fmt.Errorf("MQTT_DEFAULT_ROLE %q is a reserved role", cfg.DefaultRole)
+			}
+		}
 	}
 	return cfg, nil
 }

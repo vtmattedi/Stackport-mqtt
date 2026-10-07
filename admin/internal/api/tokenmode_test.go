@@ -11,6 +11,11 @@ import (
 
 // The whole API behind the standalone token authenticator, with no MW Identity involved.
 func newTokenServer(t *testing.T, b *fakeBroker) (http.Handler, map[string]string) {
+	return newTokenServerWith(t, b, nil)
+}
+
+// newTokenServerWith lets a test adjust the API options before the server is built.
+func newTokenServerWith(t *testing.T, b *fakeBroker, mutate func(*Options)) (http.Handler, map[string]string) {
 	t.Helper()
 	if b.reply == nil {
 		// One reply shape that satisfies the list, get and roles handlers.
@@ -30,13 +35,17 @@ func newTokenServer(t *testing.T, b *fakeBroker) (http.Handler, map[string]strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Options{
+	opts := Options{
 		Broker:         b,
 		Stats:          fakeStats{},
 		Auth:           tokenauth.New(parsed),
 		AllowedRoles:   []string{"nmnw"},
 		ProtectedUsers: []string{"mqtt-admin"},
-	}), tokens
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	return New(opts), tokens
 }
 
 func TestTokenModeEnforcesScopesOnEveryRoute(t *testing.T) {

@@ -1,7 +1,8 @@
 // Package api is the mqtt-admin HTTP surface. Every route is explicit and guarded by
 // exactly one delegated scope; there is no generic passthrough to the broker. The API
-// administers clients (users), never the access model: roles are read-only and only
-// the configured allow-list can be assigned.
+// administers clients (users) and the roles that grant them access, behind guardrails: the
+// broker's own roles are reserved, nothing may be granted the control channel, and every
+// change is audited.
 package api
 
 import (
@@ -30,11 +31,13 @@ const (
 	ScopeClientsDelete     = scopes.ClientsDelete
 	ScopeCredentialsRotate = scopes.CredentialsRotate
 	ScopeRolesRead         = scopes.RolesRead
+	ScopeRolesWrite        = scopes.RolesWrite
+	ScopeRolesDelete       = scopes.RolesDelete
 	ScopeServerRead        = scopes.ServerRead
 
 	minPassword  = 24
 	maxPassword  = 128
-	maxBodyBytes = 4 << 10
+	maxBodyBytes = 32 << 10
 )
 
 var usernameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -43,10 +46,17 @@ var usernameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 type StatsSource interface{ Snapshot() stats.Snapshot }
 
 type Options struct {
-	Broker         dynsec.Broker
-	Stats          StatsSource
-	Auth           auth.Authorizer
-	AllowedRoles   []string
+	Broker dynsec.Broker
+	Stats  StatsSource
+	Auth   auth.Authorizer
+	// AllowedRoles optionally restricts which roles may be assigned to clients. Empty means
+	// every role that is not reserved.
+	AllowedRoles []string
+	// ReservedRoles can never be created, edited, deleted or assigned through the API.
+	// Nil means the broker's own roles: admin and dynsec-admin.
+	ReservedRoles []string
+	// DefaultRole is given to a new client when the caller names no role.
+	DefaultRole    string
 	ProtectedUsers []string
 	// AuthFailureLimit is how many 401/403 responses one client address may cause per
 	// minute before it is answered 429. Zero disables the limit.
@@ -54,16 +64,28 @@ type Options struct {
 }
 
 type server struct {
-	broker    dynsec.Broker
-	stats     StatsSource
-	allowed   []string
-	protected map[string]bool
+	broker      dynsec.Broker
+	stats       StatsSource
+	allowOnly   []string
+	reserved    map[string]bool
+	defaultRole string
+	protected   map[string]bool
 }
 
 func New(opts Options) http.Handler {
-	s := &server{broker: opts.Broker, stats: opts.Stats, allowed: opts.AllowedRoles, protected: map[string]bool{}}
+	s := &server{
+		broker: opts.Broker, stats: opts.Stats, allowOnly: opts.AllowedRoles,
+		defaultRole: opts.DefaultRole, protected: map[string]bool{}, reserved: map[string]bool{},
+	}
 	for _, u := range opts.ProtectedUsers {
 		s.protected[u] = true
+	}
+	reserved := opts.ReservedRoles
+	if reserved == nil {
+		reserved = []string{"admin", "dynsec-admin"}
+	}
+	for _, role := range reserved {
+		s.reserved[role] = true
 	}
 	a := opts.Auth
 	mux := http.NewServeMux()
@@ -85,6 +107,13 @@ func New(opts Options) http.Handler {
 	mux.Handle("GET /admin/api/docs/{version}", a.Require(ScopeServerRead, http.HandlerFunc(getDoc)))
 	mux.Handle("GET /admin/api/stats", a.Require(ScopeServerRead, http.HandlerFunc(s.brokerStats)))
 	mux.Handle("GET /admin/api/roles", a.Require(ScopeRolesRead, http.HandlerFunc(s.listRoles)))
+	mux.Handle("POST /admin/api/roles", a.Require(ScopeRolesWrite, http.HandlerFunc(s.createRole)))
+	mux.Handle("GET /admin/api/roles/{name}", a.Require(ScopeRolesRead, http.HandlerFunc(s.getRole)))
+	mux.Handle("DELETE /admin/api/roles/{name}", a.Require(ScopeRolesDelete, http.HandlerFunc(s.deleteRole)))
+	mux.Handle("POST /admin/api/roles/{name}/acls", a.Require(ScopeRolesWrite, http.HandlerFunc(s.addACL)))
+	mux.Handle("POST /admin/api/roles/{name}/acls/remove", a.Require(ScopeRolesWrite, http.HandlerFunc(s.removeACL)))
+	mux.Handle("PUT /admin/api/clients/{username}/roles/{role}", a.Require(ScopeRolesWrite, http.HandlerFunc(s.assignRole)))
+	mux.Handle("DELETE /admin/api/clients/{username}/roles/{role}", a.Require(ScopeRolesWrite, http.HandlerFunc(s.unassignRole)))
 	mux.Handle("GET /admin/api/clients", a.Require(ScopeClientsRead, http.HandlerFunc(s.listClients)))
 	mux.Handle("GET /admin/api/clients/{username}", a.Require(ScopeClientsRead, http.HandlerFunc(s.getClient)))
 	mux.Handle("POST /admin/api/clients", a.Require(ScopeClientsWrite, http.HandlerFunc(s.createClient)))
@@ -115,7 +144,10 @@ type dynClient struct {
 func (c dynClient) dto() clientDTO {
 	out := clientDTO{Username: c.Username, Disabled: c.Disabled, Roles: []string{}}
 	for _, r := range c.Roles {
-		out.Roles = append(out.Roles, r.RoleName)
+		// An empty name is a dangling reference left by the broker, not a real role.
+		if r.RoleName != "" {
+			out.Roles = append(out.Roles, r.RoleName)
+		}
 	}
 	return out
 }
@@ -179,9 +211,19 @@ func (s *server) createClient(w http.ResponseWriter, r *http.Request) {
 	}
 	role := req.Role
 	if role == "" {
-		role = s.allowed[0]
+		var err error
+		if role, err = s.defaultRoleFor(r.Context()); errors.Is(err, errRoleRequired) {
+			writeError(w, http.StatusBadRequest, "role_required")
+			return
+		} else if err != nil {
+			s.fail(w, r, "create_client", req.Username, err)
+			return
+		}
 	}
-	if !contains(s.allowed, role) {
+	if !validRoleName(w, role) {
+		return
+	}
+	if !s.isAssignable(role) {
 		writeError(w, http.StatusBadRequest, "role_not_allowed")
 		return
 	}
@@ -189,17 +231,26 @@ func (s *server) createClient(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_, err := s.broker.Do(r.Context(), map[string]any{
+	// The role is attached with a separate addClientRole, never inside createClient.
+	// Mosquitto 2.1.2 links a role given inline to the client in a way deleteRole does not
+	// undo: the client keeps a dangling reference to the freed role, which corrupts
+	// memory and has crashed the broker. addClientRole links both sides correctly.
+	if _, err := s.broker.Do(r.Context(), map[string]any{
 		"command":  "createClient",
 		"username": req.Username,
 		"password": password,
-		"roles":    []map[string]string{{"rolename": role}},
-	})
-	if err != nil {
+	}); err != nil {
 		s.fail(w, r, "create_client", req.Username, err)
 		return
 	}
-	audit(r, "create_client", req.Username, "ok")
+	if _, err := s.broker.Do(r.Context(), map[string]any{
+		"command": "addClientRole", "username": req.Username, "rolename": role,
+	}); err != nil {
+		s.rollbackClient(r, req.Username)
+		s.fail(w, r, "create_client", req.Username, err)
+		return
+	}
+	audit(r, "create_client", req.Username, "ok role="+role)
 	resp := map[string]any{"username": req.Username, "role": role}
 	if generated {
 		resp["password"] = password // returned exactly once; never logged
@@ -268,48 +319,6 @@ func (s *server) deleteClient(w http.ResponseWriter, r *http.Request) {
 	}
 	audit(r, "delete_client", username, "ok")
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) listRoles(w http.ResponseWriter, r *http.Request) {
-	data, err := s.broker.Do(r.Context(), map[string]any{"command": "listRoles", "verbose": true})
-	if err != nil {
-		s.fail(w, r, "list_roles", "", err)
-		return
-	}
-	var payload struct {
-		Roles []struct {
-			RoleName string `json:"rolename"`
-			ACLs     []struct {
-				ACLType  string `json:"acltype"`
-				Topic    string `json:"topic"`
-				Allow    bool   `json:"allow"`
-				Priority int    `json:"priority"`
-			} `json:"acls"`
-		} `json:"roles"`
-	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		s.fail(w, r, "list_roles", "", errBadBrokerReply)
-		return
-	}
-	type acl struct {
-		Type     string `json:"type"`
-		Topic    string `json:"topic"`
-		Allow    bool   `json:"allow"`
-		Priority int    `json:"priority"`
-	}
-	type role struct {
-		Name string `json:"name"`
-		ACLs []acl  `json:"acls"`
-	}
-	out := make([]role, 0, len(payload.Roles))
-	for _, p := range payload.Roles {
-		item := role{Name: p.RoleName, ACLs: []acl{}}
-		for _, a := range p.ACLs {
-			item.ACLs = append(item.ACLs, acl{Type: a.ACLType, Topic: a.Topic, Allow: a.Allow, Priority: a.Priority})
-		}
-		out = append(out, item)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"roles": out, "assignable": s.allowed})
 }
 
 // listDocs and getDoc serve the embedded documentation. The control plane passes the

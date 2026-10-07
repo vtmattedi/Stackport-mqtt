@@ -10,12 +10,16 @@ const (
 	ClientsDelete     = "mqtt.clients.delete"
 	CredentialsRotate = "mqtt.credentials.rotate"
 	RolesRead         = "mqtt.roles.read"
-	ServerRead        = "mqtt.server.read"
+	// RolesWrite creates roles, edits their ACLs and assigns or removes roles on clients:
+	// everything that changes who may do what. RolesDelete removes a role.
+	RolesWrite  = "mqtt.roles.write"
+	RolesDelete = "mqtt.roles.delete"
+	ServerRead  = "mqtt.server.read"
 )
 
 // All lists every scope the API knows.
 func All() []string {
-	return []string{ClientsRead, ClientsWrite, ClientsDelete, CredentialsRotate, RolesRead, ServerRead}
+	return []string{ClientsRead, ClientsWrite, ClientsDelete, CredentialsRotate, RolesRead, RolesWrite, RolesDelete, ServerRead}
 }
 
 // presets are convenience names for token configuration. They only exist at
@@ -23,7 +27,9 @@ func All() []string {
 var presets = map[string][]string{
 	// read: look at everything, change nothing.
 	"read": {ClientsRead, RolesRead, ServerRead},
-	// write: read, plus create, disable/enable and rotate passwords. No delete.
+	// write: read, plus create, disable/enable and rotate passwords. No delete, and no
+	// access-model changes: roles.write is never part of a preset except admin, so a token
+	// configured as "write" before roles existed does not gain the power to edit access.
 	"write": {ClientsRead, RolesRead, ServerRead, ClientsWrite, CredentialsRotate},
 	// admin: everything, including deleting clients.
 	"admin": All(),

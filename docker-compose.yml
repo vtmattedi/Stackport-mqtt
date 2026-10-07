@@ -19,6 +19,8 @@ services:
     volumes:
       - mqtt-data:/mosquitto/data
       - mqtt-certs:/mosquitto/certs
+    labels:
+      com.stackport.health.ignore: "true"
 
   mqtt:
     image: stackport-mqtt:local

@@ -12,7 +12,7 @@ There is no UI in this service. Call the API directly, or build a UI on top of i
 
 1. **Broker user.** In the broker container terminal:
    ```sh
-   sh /stackport-scripts/setup-roles.sh
+   sh /stackport-scripts/setup-roles.sh              # add a profile name (e.g. nightmare) for its extra roles
    sh /stackport-scripts/provision-client.sh mqtt-admin-api dynsec-admin
    ```
 2. **Generate a token** (see [Tokens](#token-mode-default)):
@@ -221,7 +221,12 @@ Errors are `{"error":"<code>"}`: `unauthorized` (401), `forbidden` (403), `prote
 | `MQTT_API_PASSWORD` | none | password of the broker user, always required |
 | `MQTT_API_USERNAME` | `mqtt-admin-api` | the broker user |
 | `MQTT_BROKER_URL` | `ssl://mqtt:8883` | broker address |
-| `MQTT_TLS_SERVER_NAME` | `mqtt.mattediworks.com` | name the broker certificate must match |
+| `MQTT_TLS_SERVER_NAME` | host of `MQTT_BROKER_URL` | name the broker certificate must match; set it when the service dials an internal name (such as `mqtt`) but the certificate carries the public host |
+| `MQTT_PUBLIC_HOST` | none | broker host shown in the served documentation |
+| `MQTT_PUBLIC_PORT` | `8883` | broker TLS port shown in the documentation |
+| `MQTT_WS_URL` | none | WebSocket URL shown in the documentation; the browser section is omitted when empty |
+| `MQTT_CA_NAME` | `ca.crt` | CA file name shown in the documentation |
+| `MQTT_DOCS_PROFILE` | none | optional documentation profile appended to the served docs (`nightmare`); unknown names are ignored |
 | `MQTT_ROOT_CA_B64` | none | base64 PEM of the CA that signed the broker certificate; shared with the broker's `secrets/root-ca.env` |
 | `MQTT_ALLOWED_ROLES` | none | optional allow-list of the roles that may be given to clients; empty means every role that is not reserved |
 | `MQTT_RESERVED_ROLES` | `admin,dynsec-admin` | roles the API never creates, edits, deletes or assigns |

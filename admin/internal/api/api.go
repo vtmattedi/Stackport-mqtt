@@ -61,6 +61,8 @@ type Options struct {
 	// AuthFailureLimit is how many 401/403 responses one client address may cause per
 	// minute before it is answered 429. Zero disables the limit.
 	AuthFailureLimit int
+	// Docs fills the deployment-specific values of the served documentation.
+	Docs docs.Vars
 }
 
 type server struct {
@@ -70,12 +72,13 @@ type server struct {
 	reserved    map[string]bool
 	defaultRole string
 	protected   map[string]bool
+	docs        docs.Vars
 }
 
 func New(opts Options) http.Handler {
 	s := &server{
 		broker: opts.Broker, stats: opts.Stats, allowOnly: opts.AllowedRoles,
-		defaultRole: opts.DefaultRole, protected: map[string]bool{}, reserved: map[string]bool{},
+		defaultRole: opts.DefaultRole, docs: opts.Docs, protected: map[string]bool{}, reserved: map[string]bool{},
 	}
 	for _, u := range opts.ProtectedUsers {
 		s.protected[u] = true
@@ -104,7 +107,7 @@ func New(opts Options) http.Handler {
 
 	mux.Handle("GET /admin/api/server", a.Require(ScopeServerRead, http.HandlerFunc(s.serverStatus)))
 	mux.Handle("GET /admin/api/docs", a.Require(ScopeServerRead, http.HandlerFunc(listDocs)))
-	mux.Handle("GET /admin/api/docs/{version}", a.Require(ScopeServerRead, http.HandlerFunc(getDoc)))
+	mux.Handle("GET /admin/api/docs/{version}", a.Require(ScopeServerRead, http.HandlerFunc(s.getDoc)))
 	mux.Handle("GET /admin/api/stats", a.Require(ScopeServerRead, http.HandlerFunc(s.brokerStats)))
 	mux.Handle("GET /admin/api/roles", a.Require(ScopeRolesRead, http.HandlerFunc(s.listRoles)))
 	mux.Handle("POST /admin/api/roles", a.Require(ScopeRolesWrite, http.HandlerFunc(s.createRole)))
@@ -327,8 +330,8 @@ func listDocs(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"versions": docs.Versions()})
 }
 
-func getDoc(w http.ResponseWriter, r *http.Request) {
-	doc, ok := docs.Get(r.PathValue("version"), r.URL.Query().Get("lang"))
+func (s *server) getDoc(w http.ResponseWriter, r *http.Request) {
+	doc, ok := docs.Get(r.PathValue("version"), r.URL.Query().Get("lang"), s.docs)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found")
 		return

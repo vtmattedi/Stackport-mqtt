@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -46,6 +47,13 @@ type Config struct {
 	// AuthFailureLimit caps failed-auth responses per client address per minute (0 = off).
 	AuthFailureLimit int
 
+	// Public connection details, used only to fill in the served documentation.
+	PublicHost  string
+	PublicPort  string
+	WSURL       string
+	CAName      string
+	DocsProfile string
+
 	IdentityBaseURL      string
 	IdentityClientID     string
 	IdentityClientSecret string
@@ -57,7 +65,12 @@ func Load() (Config, error) {
 	cfg := Config{
 		Port:                 get("PORT", "8090"),
 		BrokerURL:            get("MQTT_BROKER_URL", "ssl://mqtt:8883"),
-		TLSServerName:        get("MQTT_TLS_SERVER_NAME", "mqtt.mattediworks.com"),
+		TLSServerName:        strings.TrimSpace(os.Getenv("MQTT_TLS_SERVER_NAME")),
+		PublicHost:           strings.TrimSpace(os.Getenv("MQTT_PUBLIC_HOST")),
+		PublicPort:           get("MQTT_PUBLIC_PORT", "8883"),
+		WSURL:                strings.TrimSpace(os.Getenv("MQTT_WS_URL")),
+		CAName:               get("MQTT_CA_NAME", "ca.crt"),
+		DocsProfile:          strings.ToLower(strings.TrimSpace(os.Getenv("MQTT_DOCS_PROFILE"))),
 		APIUsername:          get("MQTT_API_USERNAME", "mqtt-admin-api"),
 		APIPassword:          os.Getenv("MQTT_API_PASSWORD"),
 		AllowedRoles:         list(os.Getenv("MQTT_ALLOWED_ROLES")),
@@ -117,6 +130,15 @@ func Load() (Config, error) {
 		required["MW_IDENTITY_INTROSPECTION_CLIENT_SECRET"] = cfg.IdentityClientSecret
 	default:
 		return Config{}, fmt.Errorf("invalid ADMIN_AUTH_MODE %q (use %q or %q)", cfg.AuthMode, ModeToken, ModeFederated)
+	}
+
+	// Without an explicit name, the certificate must match the host in the broker URL.
+	if cfg.TLSServerName == "" {
+		u, err := url.Parse(cfg.BrokerURL)
+		if err != nil || u.Hostname() == "" {
+			return Config{}, fmt.Errorf("invalid MQTT_BROKER_URL %q", cfg.BrokerURL)
+		}
+		cfg.TLSServerName = u.Hostname()
 	}
 
 	var missing []string

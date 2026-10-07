@@ -270,11 +270,11 @@ func TestDocsListAndLanguageSelection(t *testing.T) {
 	}
 
 	for lang, want := range map[string]string{
-		"":      "Connecting a gateway or device",
-		"en":    "Connecting a gateway or device",
-		"pt":    "Conectando um gateway ou dispositivo",
-		"pt-BR": "Conectando um gateway ou dispositivo",
-		"fr":    "Connecting a gateway or device", // unsupported: English
+		"":      "Connecting a client",
+		"en":    "Connecting a client",
+		"pt":    "Conectando um cliente",
+		"pt-BR": "Conectando um cliente",
+		"fr":    "Connecting a client", // unsupported: English
 	} {
 		rec := do(h, "GET", "/admin/api/docs/v1?lang="+lang, "all", "")
 		if rec.Code != 200 || !strings.Contains(rec.Body.String(), want) {

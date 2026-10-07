@@ -6,6 +6,8 @@ Production-oriented, TLS-only Eclipse Mosquitto for:
 mqtts://mqtt.mattediworks.com:8883
 ```
 
+The hostnames in this guide (`mqtt.mattediworks.com`, `mqtt-ws.mattediworks.com`, `nm-root-ca.crt`) are one deployment's example values: replace them with yours.
+
 This is a normal managed StackPort project. Its Compose file never publishes a host port. StackPort owns public TCP `8883`; Mosquitto owns TLS termination, authentication, and deny-by-default authorization.
 
 ## What StackPort does
@@ -158,14 +160,16 @@ Add `AAAA` only after IPv6 has been intentionally tested end-to-end.
 
 ## Access model
 
-NightMare Network topics are global and device-rooted (`<device>/...`, plus `all/console/in` and `Control/*`), devices read each other's state, and gateways bridge ESP-NOW devices by publishing under their names and subscribing to `#`. Per-device topic ACLs cannot work, so this broker uses one trusted role:
+Access is granted by Dynamic Security **roles**: lists of topic rules that you define for your own application, in the admin console or API (`admin/README.md`). Two accounts are special and are never given to applications:
 
-- **`nmnw`**: publish, subscribe and receive on `#` (which includes `Control/*`). `#` does not match `$`-prefixed topics, so the Dynamic Security admin channel (`$CONTROL`) and `$SYS` stay reserved for `mqtt-admin`.
-- **`mqtt-admin`**: broker administration only. Never use it from firmware or services.
+- **`mqtt-admin`**: the broker's bootstrap administrator. Never use it from firmware or services.
+- **`dynsec-admin`** (role, created by `setup-roles.sh`): used only by the admin API's own broker user. It allows the Dynamic Security channel (`$CONTROL`) and read-only `$SYS`.
 
-Any gateway, device or service gets the `nmnw` role. Create one user per gateway/device for individual revocation, or create a single user and flash it everywhere. Both work; the role grants the access. A credential is a full-trust credential: if it leaks, disable the user (or rotate the shared one).
+`#` does not match `$`-prefixed topics, so a role with `#` never reaches `$CONTROL` or `$SYS`. Create one user per gateway, device or service for individual revocation, or share one; the role grants the access.
 
-The broker is a single trust domain. If NM-NW later gains namespaces, or tenants must be isolated, spin up a separate broker or revisit the roles.
+### Profiles
+
+A profile is an optional, deployment-specific bundle: extra roles in `scripts/profiles/<name>.sh` and an extra section appended to the served documentation (`MQTT_DOCS_PROFILE`). The only one shipped is `nightmare`, for the NightMare Network: a single trusted role `nmnw` with publish, subscribe and receive on `#`, because its topics are global and device-rooted and per-device ACLs cannot work. A generic deployment ignores profiles.
 
 ## Initialize access from the StackPort terminal
 
@@ -177,29 +181,20 @@ Inspect the deny defaults, clients and roles:
 sh /stackport-scripts/show-security-state.sh
 ```
 
-Create the role once (safe to repeat):
+Create the core role once (safe to repeat). Add a profile name to also create that profile's roles:
 
 ```sh
-sh /stackport-scripts/setup-roles.sh
+sh /stackport-scripts/setup-roles.sh              # core role only
+sh /stackport-scripts/setup-roles.sh nightmare    # plus the nmnw role
 ```
 
-Create a user (gateway, device or service) with the `nmnw` role. Use a unique random password of at least 24 characters:
+Create a user (gateway, device or service) with a role. Use a unique random password of at least 24 characters. The role is required, either as the second argument or through `MQTT_DEFAULT_ROLE`:
 
 ```sh
-sh /stackport-scripts/provision-client.sh nmnw-gateway-aabbccddeeff
+sh /stackport-scripts/provision-client.sh gateway-aabbccddeeff my-role
 ```
 
-Pass a second argument to use a different role. Passwords are not printed.
-
-Firmware connects with these values (see the NightMareNetwork `creds.h`):
-
-```text
-REMOTE_MQTT_URL   mqtt.mattediworks.com
-REMOTE_MQTT_PORT  8883
-MQTT_USER         <the username you created>
-MQTT_PASSWD       <its password>
-ROOT_CA           contents of nm-root-ca.crt
-```
+Passwords are not printed. Clients connect with the host and port, the CA certificate, and the username and password you created.
 
 Useful direct administration commands from the same terminal follow this pattern:
 

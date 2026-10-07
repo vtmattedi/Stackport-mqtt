@@ -1,21 +1,22 @@
 #!/bin/sh
 set -eu
 
-# Creates the `nmnw` role (and the narrow `dynsec-admin` role for the mqtt-admin API): fully trusted NightMare Network access. It may publish,
-# subscribe and receive on every topic (`#`), including Control/*. `#` does not match
-# $-prefixed topics, so the Dynamic Security admin channel ($CONTROL) and $SYS stay
-# reserved for the admin client. Safe to run more than once.
-#   sh /stackport-scripts/setup-roles.sh
+# Creates the core role the admin API needs (`dynsec-admin`), and optionally the roles of a
+# profile. Safe to run more than once.
+#   sh /stackport-scripts/setup-roles.sh              core role only
+#   sh /stackport-scripts/setup-roles.sh nightmare    core role + scripts/profiles/nightmare.sh
+# Everything else (your own roles) is created in the admin console or API.
 . "$(dirname "$0")/admin-lib.sh"
 
-role=nmnw
-ctrl createRole "$role" || true
-for acl in publishClientSend publishClientReceive subscribePattern unsubscribePattern; do
-  ctrl addRoleACL "$role" "$acl" '#' allow || true
-done
-
-echo "Role $role:"
-ctrl getRole "$role"
+profile=${1:-}
+if [ -n "$profile" ]; then
+  if ! printf '%s' "$profile" | grep -Eq '^[a-z][a-z0-9-]{0,31}$' ||
+     [ ! -f "$(dirname "$0")/profiles/$profile.sh" ]; then
+    echo "Unknown profile '$profile'. Available:" >&2
+    ls "$(dirname "$0")/profiles" 2>/dev/null | sed 's/\.sh$//; s/^/  /' >&2
+    exit 1
+  fi
+fi
 
 # dynsec-admin: only what the mqtt-admin API client needs: Dynamic Security plus read-only $SYS.
 # It is not a general-purpose role; use it solely for the mqtt-admin-api user.
@@ -30,3 +31,7 @@ ctrl addRoleACL "$api_role" publishClientReceive '$SYS/#' allow || true
 
 echo "Role $api_role:"
 ctrl getRole "$api_role"
+
+if [ -n "$profile" ]; then
+  . "$(dirname "$0")/profiles/$profile.sh"
+fi

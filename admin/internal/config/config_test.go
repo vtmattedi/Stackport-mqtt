@@ -114,3 +114,22 @@ func TestBrokerPasswordAndCAStayRequiredInEveryMode(t *testing.T) {
 		t.Fatal("the root CA is required")
 	}
 }
+
+func TestTLSServerNameDefaultsToTheBrokerHost(t *testing.T) {
+	baseEnv(t)
+	t.Setenv("MQTT_ADMIN_TOKENS", "ci:"+tokenauth.Hash("t")+":read")
+	t.Setenv("MQTT_BROKER_URL", "ssl://broker.example.org:8883")
+	t.Setenv("MQTT_TLS_SERVER_NAME", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TLSServerName != "broker.example.org" {
+		t.Errorf("server name %q", cfg.TLSServerName)
+	}
+	t.Setenv("MQTT_TLS_SERVER_NAME", "mqtt.example.org")
+	cfg, _ = Load()
+	if cfg.TLSServerName != "mqtt.example.org" {
+		t.Errorf("explicit name ignored: %q", cfg.TLSServerName)
+	}
+}

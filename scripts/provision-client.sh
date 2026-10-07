@@ -3,12 +3,13 @@ set -eu
 
 # Creates one MQTT user (gateway, device, backend, ...) with a role. Create as many users
 # as you want, or flash one shared user everywhere: the role is what grants access.
-#   sh /stackport-scripts/provision-client.sh <username> [role]
-# The role defaults to `nmnw` (run setup-roles.sh once first).
+#   sh /stackport-scripts/provision-client.sh <username> <role>
+# The role is the second argument, or MQTT_DEFAULT_ROLE. Create roles in the admin console
+# or API first (or with setup-roles.sh <profile>).
 client=${1:-}
-role=${2:-nmnw}
-if ! printf '%s' "$client" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
-  echo "Usage: $0 <username> [role]" >&2
+role=${2:-${MQTT_DEFAULT_ROLE:-}}
+if ! printf '%s' "$client" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' || [ -z "$role" ]; then
+  echo "Usage: $0 <username> <role>   (or set MQTT_DEFAULT_ROLE)" >&2
   exit 1
 fi
 

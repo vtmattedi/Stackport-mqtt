@@ -15,6 +15,7 @@ import (
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/api"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/auth"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/config"
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/docs"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/dynsec"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/identity"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/scopes"
@@ -37,6 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	slog.Info("broker TLS", "url", cfg.BrokerURL, "server_name", cfg.TLSServerName)
 	authorizer := newAuthorizer(cfg)
 	brokerStats := stats.New()
 	broker, err := dynsec.New(dynsec.Options{
@@ -65,6 +67,10 @@ func main() {
 			DefaultRole:      cfg.DefaultRole,
 			ProtectedUsers:   cfg.ProtectedUsers,
 			AuthFailureLimit: cfg.AuthFailureLimit,
+			Docs: docs.Vars{
+				Host: cfg.PublicHost, Port: cfg.PublicPort, WSURL: cfg.WSURL,
+				CAFile: cfg.CAName, Profile: cfg.DocsProfile,
+			},
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

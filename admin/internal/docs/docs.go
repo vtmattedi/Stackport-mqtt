@@ -6,10 +6,27 @@ package docs
 import (
 	"embed"
 	"regexp"
+	"strings"
 )
 
-//go:embed content/*.md
+//go:embed content/*.md content/profiles/*.md
 var content embed.FS
+
+// Vars fills the deployment-specific values of the generic documentation. Empty fields
+// fall back to neutral placeholders, so the text is never wrong, only less specific.
+type Vars struct {
+	Host   string // public broker host name
+	Port   string // public TLS port, "8883" when empty
+	WSURL  string // WebSocket URL; the browser section is dropped when empty
+	CAFile string // file name of the CA certificate clients trust
+	// Profile optionally appends a deployment-specific section (profiles/<name>.<lang>.md).
+	// An unknown or malformed name is ignored.
+	Profile string
+}
+
+var profilePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+var wsBlock = regexp.MustCompile(`(?s)<!--ws-->(.*?)<!--/ws-->\n*`)
 
 const contentType = "text/markdown"
 
@@ -36,7 +53,7 @@ var versionPattern = regexp.MustCompile(`^v[0-9]{1,3}$`)
 func Versions() []Version { return append([]Version(nil), versions...) }
 
 // Get returns a document, or false when the version is not published.
-func Get(version, lang string) (Document, bool) {
+func Get(version, lang string, vars Vars) (Document, bool) {
 	if !versionPattern.MatchString(version) {
 		return Document{}, false
 	}
@@ -44,15 +61,22 @@ func Get(version, lang string) (Document, bool) {
 		if v.Version != version {
 			continue
 		}
-		body, err := content.ReadFile("content/" + version + "." + normalise(lang) + ".md")
+		language := normalise(lang)
+		body, err := content.ReadFile("content/" + version + "." + language + ".md")
 		if err != nil {
 			return Document{}, false
+		}
+		text := render(string(body), vars)
+		if profilePattern.MatchString(vars.Profile) {
+			if extra, err := content.ReadFile("content/profiles/" + vars.Profile + "." + language + ".md"); err == nil {
+				text = strings.TrimRight(text, "\n") + "\n\n" + render(string(extra), vars)
+			}
 		}
 		return Document{
 			Version:       v.Version,
 			Status:        v.Status,
 			ContentType:   v.ContentType,
-			Documentation: string(body),
+			Documentation: text,
 		}, true
 	}
 	return Document{}, false
@@ -64,4 +88,29 @@ func normalise(lang string) string {
 		return "pt"
 	}
 	return "en"
+}
+
+// render removes the WebSocket section when there is no WebSocket URL and fills the
+// placeholders. Values are substituted verbatim; they come from operator configuration.
+func render(text string, v Vars) string {
+	if v.WSURL == "" {
+		text = wsBlock.ReplaceAllString(text, "")
+	} else {
+		text = strings.NewReplacer("<!--ws-->\n", "", "<!--/ws-->\n", "").Replace(text)
+	}
+	port := v.Port
+	if port == "" {
+		port = "8883"
+	}
+	host := v.Host
+	if host == "" {
+		host = "<broker-host>"
+	}
+	ca := v.CAFile
+	if ca == "" {
+		ca = "ca.crt"
+	}
+	return strings.NewReplacer(
+		"{{host}}", host, "{{port}}", port, "{{ws_url}}", v.WSURL, "{{ca_file}}", ca,
+	).Replace(text)
 }

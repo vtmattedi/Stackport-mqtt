@@ -310,7 +310,9 @@ func TestDocsDescribeEveryScopeRouteAndErrorCode(t *testing.T) {
 		var doc map[string]string
 		_ = json.Unmarshal([]byte(body), &doc)
 		text := doc["documentation"]
-		for _, item := range append(append(scopes, routes...), codes...) {
+		auth := []string{"ADMIN_AUTH_MODE", "MQTT_ADMIN_TOKENS", "mqtt-admin token new", "Authorization: Bearer",
+			"`read`", "`write`", "`admin`", "federated"}
+		for _, item := range append(append(append(scopes, routes...), codes...), auth...) {
 			if !strings.Contains(text, item) {
 				t.Errorf("%s docs do not mention %q", lang, item)
 			}

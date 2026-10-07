@@ -3,15 +3,30 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/tokenauth"
+)
+
+// Authentication modes (ADMIN_AUTH_MODE).
+const (
+	ModeToken     = "token"
+	ModeFederated = "federated"
 )
 
 type Config struct {
 	Port string
+
+	// AuthMode is how callers authenticate: ModeToken (default) or ModeFederated.
+	AuthMode string
+	// Tokens are the configured admin tokens (ModeToken only).
+	Tokens []tokenauth.Entry
 
 	BrokerURL     string
 	TLSServerName string
@@ -76,17 +91,36 @@ func Load() (Config, error) {
 	}
 	cfg.RootCAPEM = pem
 
+	required := map[string]string{"MQTT_API_PASSWORD": cfg.APIPassword}
+
+	cfg.AuthMode = strings.ToLower(get("ADMIN_AUTH_MODE", ModeToken))
+	switch cfg.AuthMode {
+	case ModeToken:
+		tokens, err := tokenauth.ParseEntries(os.Getenv("MQTT_ADMIN_TOKENS"))
+		if err != nil {
+			return Config{}, fmt.Errorf("MQTT_ADMIN_TOKENS: %w", err)
+		}
+		if len(tokens) == 0 {
+			return Config{}, errors.New("ADMIN_AUTH_MODE=token (the default) needs at least one token in " +
+				"MQTT_ADMIN_TOKENS: generate one with `mqtt-admin token new`, or set ADMIN_AUTH_MODE=federated " +
+				"to authenticate with MW Identity instead")
+		}
+		cfg.Tokens = tokens
+	case ModeFederated:
+		required["MW_IDENTITY_INTERNAL_BASE_URL"] = cfg.IdentityBaseURL
+		required["MW_IDENTITY_INTROSPECTION_CLIENT_SECRET"] = cfg.IdentityClientSecret
+	default:
+		return Config{}, fmt.Errorf("invalid ADMIN_AUTH_MODE %q (use %q or %q)", cfg.AuthMode, ModeToken, ModeFederated)
+	}
+
 	var missing []string
-	for name, value := range map[string]string{
-		"MQTT_API_PASSWORD":                       cfg.APIPassword,
-		"MW_IDENTITY_INTERNAL_BASE_URL":           cfg.IdentityBaseURL,
-		"MW_IDENTITY_INTROSPECTION_CLIENT_SECRET": cfg.IdentityClientSecret,
-	} {
+	for name, value := range required {
 		if value == "" {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
+		sort.Strings(missing)
 		return Config{}, fmt.Errorf("missing required environment: %s", strings.Join(missing, ", "))
 	}
 	if len(cfg.AllowedRoles) == 0 {

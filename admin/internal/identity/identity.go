@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/auth"
 )
 
 const maxIntrospectionBody = 64 << 10
@@ -120,19 +122,6 @@ func nonEmpty(values []string) []string {
 	return out
 }
 
-type principalKey struct{}
-
-// Principal is the authenticated caller; Subject is the immutable Identity `sub`.
-type Principal struct {
-	Subject string
-	Scopes  []string
-}
-
-func PrincipalFrom(ctx context.Context) (Principal, bool) {
-	p, ok := ctx.Value(principalKey{}).(Principal)
-	return p, ok
-}
-
 type Authenticator struct {
 	audience string
 	client   Introspector
@@ -173,8 +162,9 @@ func (a *Authenticator) Require(requiredScope string, next http.Handler) http.Ha
 			a.reject(w, r, http.StatusForbidden, "scope_missing")
 			return
 		}
-		principal := Principal{Subject: token.Subject, Scopes: append([]string(nil), token.Scopes...)}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, principal)))
+		// Subject is the immutable Identity `sub`.
+		principal := auth.Principal{Subject: token.Subject, Scopes: append([]string(nil), token.Scopes...)}
+		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	})
 }
 

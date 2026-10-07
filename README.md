@@ -213,7 +213,14 @@ Relevant operations include `disableClient`, `enableClient`, `setClientPassword`
 
 ## Admin API
 
-`mqtt-admin` (see [admin/README.md](admin/README.md)) is the web API behind `mw-bff` for creating, disabling, rotating and deleting MQTT users with MW Identity authorization. It runs in this Compose project, connects with its own `dynsec-admin` user, and stays dormant until `secrets/admin-api.env` exists. The admin README has the onboarding steps.
+`mqtt-admin` (see [admin/README.md](admin/README.md)) is an HTTP API for creating, disabling, rotating and deleting MQTT users, plus broker statistics and its own documentation. It runs in this Compose project, connects with its own `dynsec-admin` user, and stays dormant until `secrets/admin-api.env` exists.
+
+It has two authentication modes, chosen with `ADMIN_AUTH_MODE`:
+
+- `token` (default): static bearer tokens you generate with `mqtt-admin token new`; only their hashes are configured. Use this to run the project on its own.
+- `federated`: tokens issued by an identity provider with introspection. MattediWorks' control plane uses this mode.
+
+The admin README has the token generation and configuration steps, the scopes, and what step-up (strong authentication) means in each mode. There is no UI in this project; call the API or build one on top of it.
 
 ## External validation
 

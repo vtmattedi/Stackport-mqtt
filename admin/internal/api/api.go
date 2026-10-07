@@ -17,19 +17,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/auth"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/docs"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/dynsec"
-	"github.com/vtmattedi/stackport-mqtt/admin/internal/identity"
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/scopes"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/stats"
 )
 
 const (
-	ScopeClientsRead       = "mqtt.clients.read"
-	ScopeClientsWrite      = "mqtt.clients.write"
-	ScopeClientsDelete     = "mqtt.clients.delete"
-	ScopeCredentialsRotate = "mqtt.credentials.rotate"
-	ScopeRolesRead         = "mqtt.roles.read"
-	ScopeServerRead        = "mqtt.server.read"
+	ScopeClientsRead       = scopes.ClientsRead
+	ScopeClientsWrite      = scopes.ClientsWrite
+	ScopeClientsDelete     = scopes.ClientsDelete
+	ScopeCredentialsRotate = scopes.CredentialsRotate
+	ScopeRolesRead         = scopes.RolesRead
+	ScopeServerRead        = scopes.ServerRead
 
 	minPassword  = 24
 	maxPassword  = 128
@@ -44,7 +45,7 @@ type StatsSource interface{ Snapshot() stats.Snapshot }
 type Options struct {
 	Broker         dynsec.Broker
 	Stats          StatsSource
-	Auth           *identity.Authenticator
+	Auth           auth.Authorizer
 	AllowedRoles   []string
 	ProtectedUsers []string
 	// AuthFailureLimit is how many 401/403 responses one client address may cause per
@@ -420,7 +421,7 @@ func decode(w http.ResponseWriter, r *http.Request, into any) bool {
 
 func audit(r *http.Request, action, target, result string) {
 	actor := "unknown"
-	if p, ok := identity.PrincipalFrom(r.Context()); ok {
+	if p, ok := auth.PrincipalFrom(r.Context()); ok {
 		actor = p.Subject
 	}
 	slog.InfoContext(r.Context(), "audit", "actor", actor, "action", action, "target", target, "result", result, "request_id", w3id(r))

@@ -53,7 +53,7 @@ The service exits with a clear log line when required configuration is missing a
 2. **Identity application.** Register a confidential resource application in MW Identity with `client_id=mw-mqtt` and `audience=mw-mqtt` (if the registry needs `openid` metadata, keep it out of the delegated scopes). Save the one-time secret.
 3. **Stackport env file.** Create `secrets/admin-api.env` from the example: the `mqtt-admin-api` password, the Identity base URL and the issued secret.
 4. **Deploy** the project. `mqtt-admin` should become healthy and `GET /health` should return 200 (503 means it cannot reach the broker; check `MQTT_API_PASSWORD` and the `mqtt-admin-api` user).
-5. **Domain.** In Stackport add an HTTP domain, for example `mqtt-admin.mattediworks.com`, service `mqtt-admin`, container port `8090`, SSL on, health-check path `/health`. This is how mw-bff reaches the other downstream services as well.
+5. **Domain.** In Stackport add an HTTP domain, `admin-mqtt.mattediworks.com`, service `mqtt-admin`, container port `8090`, SSL on, health-check path `/health`. This is how mw-bff reaches the other downstream services as well.
 6. **mw-bff.** Add `mw-mqtt` to the BFF application's allowed audiences and these scopes to its allowed and delegated scopes (`BFF_DELEGATION_SCOPES`): `mqtt.clients.read`, `mqtt.clients.write`, `mqtt.clients.delete`, `mqtt.credentials.rotate`, `mqtt.roles.read`, `mqtt.server.read`. Add an explicit `/mqtt/*` facade for the routes above (mark create, rotate and delete as step-up), following the BFF guide's "Adding a new service".
 
 ## Development

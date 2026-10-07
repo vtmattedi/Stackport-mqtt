@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vtmattedi/stackport-mqtt/admin/internal/docs"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/dynsec"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/identity"
 	"github.com/vtmattedi/stackport-mqtt/admin/internal/stats"
@@ -79,6 +80,8 @@ func New(opts Options) http.Handler {
 	mux.HandleFunc("GET /ready", health) // kept as an alias
 
 	mux.Handle("GET /admin/api/server", a.Require(ScopeServerRead, http.HandlerFunc(s.serverStatus)))
+	mux.Handle("GET /admin/api/docs", a.Require(ScopeServerRead, http.HandlerFunc(listDocs)))
+	mux.Handle("GET /admin/api/docs/{version}", a.Require(ScopeServerRead, http.HandlerFunc(getDoc)))
 	mux.Handle("GET /admin/api/stats", a.Require(ScopeServerRead, http.HandlerFunc(s.brokerStats)))
 	mux.Handle("GET /admin/api/roles", a.Require(ScopeRolesRead, http.HandlerFunc(s.listRoles)))
 	mux.Handle("GET /admin/api/clients", a.Require(ScopeClientsRead, http.HandlerFunc(s.listClients)))
@@ -306,6 +309,21 @@ func (s *server) listRoles(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"roles": out, "assignable": s.allowed})
+}
+
+// listDocs and getDoc serve the embedded documentation. The control plane passes the
+// UI language as ?lang=; anything unrecognised is answered in English.
+func listDocs(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"versions": docs.Versions()})
+}
+
+func getDoc(w http.ResponseWriter, r *http.Request) {
+	doc, ok := docs.Get(r.PathValue("version"), r.URL.Query().Get("lang"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	writeJSON(w, http.StatusOK, doc)
 }
 
 func (s *server) brokerStats(w http.ResponseWriter, _ *http.Request) {

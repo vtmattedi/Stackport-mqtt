@@ -24,6 +24,8 @@ browser -> mw-bff (/api/mqtt/*) -> mqtt-admin -> Dynamic Security ($CONTROL over
 | `GET /ready` | none | alias of `/health` |
 | `GET /admin/api/server` | `mqtt.server.read` | broker connection, Dynamic Security reachability, client count |
 | `GET /admin/api/stats` | `mqtt.server.read` | latest broker `$SYS` snapshot: clients, store, messages, bytes, load averages, memory, uptime. In-memory only; `stale` is true after 60s without an update |
+| `GET /admin/api/docs` | `mqtt.server.read` | published documentation versions |
+| `GET /admin/api/docs/{version}` | `mqtt.server.read` | the document as `{version,status,content_type,documentation}`; `?lang=pt` or `?lang=en` (English by default). Embedded in the binary from `internal/docs/content/` |
 | `GET /admin/api/roles` | `mqtt.roles.read` | roles with ACLs, plus `assignable` |
 | `GET /admin/api/clients` | `mqtt.clients.read` | `{clients:[{username,disabled,roles}]}` |
 | `GET /admin/api/clients/{username}` | `mqtt.clients.read` | |

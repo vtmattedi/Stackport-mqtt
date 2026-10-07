@@ -83,14 +83,14 @@ func do(h http.Handler, method, path, token, body string) *httptest.ResponseReco
 func TestEveryAdminRouteRequiresAValidToken(t *testing.T) {
 	h := newTestServer(&fakeBroker{})
 	routes := []struct{ method, path string }{
-		{"GET", "/admin/api/server"}, {"GET", "/admin/api/stats"}, {"GET", "/admin/api/roles"}, {"GET", "/admin/api/clients"},
+		{"GET", "/admin/api/server"}, {"GET", "/admin/api/stats"}, {"GET", "/admin/api/docs"}, {"GET", "/admin/api/docs/v1"}, {"GET", "/admin/api/roles"}, {"GET", "/admin/api/clients"},
 		{"GET", "/admin/api/clients/gw1"}, {"POST", "/admin/api/clients"},
 		{"POST", "/admin/api/clients/gw1/disable"}, {"POST", "/admin/api/clients/gw1/enable"},
 		{"POST", "/admin/api/clients/gw1/password"}, {"DELETE", "/admin/api/clients/gw1"},
 	}
 	for _, r := range routes {
 		for token, want := range map[string]int{"": 401, "garbage": 401, "inactive": 401, "nosubject": 401, "otheraud": 403, "readonly": 403} {
-			if r.method == "GET" && r.path != "/admin/api/server" && r.path != "/admin/api/stats" && r.path != "/admin/api/roles" && token == "readonly" {
+			if r.method == "GET" && r.path != "/admin/api/server" && r.path != "/admin/api/stats" && r.path != "/admin/api/docs" && r.path != "/admin/api/docs/v1" && r.path != "/admin/api/roles" && token == "readonly" {
 				continue // readonly legitimately reads clients
 			}
 			if got := do(h, r.method, r.path, token, "").Code; got != want {
@@ -246,5 +246,74 @@ func TestStatsRequiresServerReadAndReturnsSnapshot(t *testing.T) {
 	rec := do(h, "GET", "/admin/api/stats", "all", "")
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"version":"2.1.2"`) || !strings.Contains(rec.Body.String(), `"connected":3`) {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestDocsListAndLanguageSelection(t *testing.T) {
+	h := newTestServer(&fakeBroker{})
+
+	list := do(h, "GET", "/admin/api/docs", "all", "")
+	if list.Code != 200 || !strings.Contains(list.Body.String(), `"version":"v1"`) ||
+		!strings.Contains(list.Body.String(), `"content_type":"text/markdown"`) {
+		t.Fatalf("list: %d %s", list.Code, list.Body)
+	}
+
+	for lang, want := range map[string]string{
+		"":      "Connecting a gateway or device",
+		"en":    "Connecting a gateway or device",
+		"pt":    "Conectando um gateway ou dispositivo",
+		"pt-BR": "Conectando um gateway ou dispositivo",
+		"fr":    "Connecting a gateway or device", // unsupported: English
+	} {
+		rec := do(h, "GET", "/admin/api/docs/v1?lang="+lang, "all", "")
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("lang %q: %d, missing %q", lang, rec.Code, want)
+		}
+	}
+
+	var doc map[string]string
+	_ = json.Unmarshal(do(h, "GET", "/admin/api/docs/v1", "all", "").Body.Bytes(), &doc)
+	if doc["version"] != "v1" || doc["status"] != "stable" || doc["documentation"] == "" {
+		t.Fatalf("unexpected document shape: %v", doc)
+	}
+}
+
+func TestDocsUnknownOrMalformedVersionsAreNotFound(t *testing.T) {
+	h := newTestServer(&fakeBroker{})
+	for _, v := range []string{"v2", "v0", "latest", "..", "v1.en", "V1", "v1%2F..", "v9999"} {
+		got := do(h, "GET", "/admin/api/docs/"+v, "all", "").Code
+		// The router cleans "/docs/.." into a redirect to the parent before any handler
+		// runs, so that request never reaches the docs code. Everything else is a 404.
+		if got != 404 && !(v == ".." && got == 307) {
+			t.Errorf("version %q: got %d, want 404", v, got)
+		}
+	}
+}
+
+// Keeps the published documentation honest: every scope, error code and route the API
+// defines must be described, in both languages.
+func TestDocsDescribeEveryScopeRouteAndErrorCode(t *testing.T) {
+	h := newTestServer(&fakeBroker{})
+	scopes := []string{ScopeClientsRead, ScopeClientsWrite, ScopeClientsDelete,
+		ScopeCredentialsRotate, ScopeRolesRead, ScopeServerRead}
+	routes := []string{
+		"GET /server", "GET /stats", "GET /roles", "GET /clients", "GET /clients/{username}",
+		"POST /clients", "POST /clients/{username}/disable", "POST /clients/{username}/enable",
+		"POST /clients/{username}/password", "DELETE /clients/{username}",
+		"GET /docs", "GET /docs/{version}",
+	}
+	codes := []string{"unauthorized", "forbidden", "protected_user", "invalid_username",
+		"role_not_allowed", "already_exists", "not_found", "broker_unavailable", "too_many_failures"}
+
+	for _, lang := range []string{"en", "pt"} {
+		body := do(h, "GET", "/admin/api/docs/v1?lang="+lang, "all", "").Body.String()
+		var doc map[string]string
+		_ = json.Unmarshal([]byte(body), &doc)
+		text := doc["documentation"]
+		for _, item := range append(append(scopes, routes...), codes...) {
+			if !strings.Contains(text, item) {
+				t.Errorf("%s docs do not mention %q", lang, item)
+			}
+		}
 	}
 }
